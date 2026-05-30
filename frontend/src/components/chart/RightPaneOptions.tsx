@@ -66,6 +66,14 @@ export function RightPaneOptions() {
               const instrument = instruments.find((item) => item.instrument_token === token);
               if (instrument) void selectInstrument(instrument);
             }}
+            onBuy={(token) => {
+              const instrument = instruments.find((item) => item.instrument_token === token);
+              if (instrument) useTradingStore.getState().openOrderTicket(instrument, "BUY");
+            }}
+            onSell={(token) => {
+              const instrument = instruments.find((item) => item.instrument_token === token);
+              if (instrument) useTradingStore.getState().openOrderTicket(instrument, "SELL");
+            }}
             onAddWatchlist={(token) => {
               const instrument = instruments.find((item) => item.instrument_token === token);
               if (instrument) addWatchlist(instrument);

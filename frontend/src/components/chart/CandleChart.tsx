@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { ColorType, CrosshairMode, createChart } from "lightweight-charts";
 import type { Candle } from "../../types";
 import { parseChartDate } from "../../utils/dates";
@@ -88,7 +88,7 @@ function normalizeCandles(rawCandles: Candle[]): {
   };
 }
 
-export const CandleChart = forwardRef<CandleChartHandle, CandleChartProps>(function CandleChart(
+export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(function CandleChart(
   { candles, lineColor = "#1976d2", viewKey, onHoverCandle, onClickCandle },
   forwardedRef,
 ) {
@@ -132,6 +132,7 @@ export const CandleChart = forwardRef<CandleChartHandle, CandleChartProps>(funct
     if (!containerRef.current || chartRef.current) return;
 
     const chart = createChart(containerRef.current, {
+      autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "#ffffff" },
         textColor: "#7b8594",
@@ -151,14 +152,12 @@ export const CandleChart = forwardRef<CandleChartHandle, CandleChartProps>(funct
       timeScale: {
         borderColor: "#eef1f4",
         rightOffset: 2,
-        barSpacing: 7,
+        barSpacing: 10,
         minBarSpacing: 4,
       },
       crosshair: {
         mode: CrosshairMode.Normal,
       },
-      width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight || 520,
     });
     chartRef.current = chart;
 
@@ -239,20 +238,9 @@ export const CandleChart = forwardRef<CandleChartHandle, CandleChartProps>(funct
     chart.subscribeCrosshairMove(handleCrosshairMove);
     chart.subscribeClick(handleClick);
 
-    const resizeObserver = new ResizeObserver((entries) => {
-      if (!entries.length || !chartRef.current) return;
-      const { width, height } = entries[0].contentRect;
-      chartRef.current.applyOptions({
-        width,
-        height: height || 520,
-      });
-    });
-    resizeObserver.observe(containerRef.current);
-
     return () => {
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
       chart.unsubscribeClick(handleClick);
-      resizeObserver.disconnect();
       seriesRef.current = null;
       volumeSeriesRef.current = null;
       chartRef.current = null;
@@ -269,10 +257,16 @@ export const CandleChart = forwardRef<CandleChartHandle, CandleChartProps>(funct
     applyPriceScale();
 
     if (viewKey !== lastFitViewKeyRef.current) {
-      chartRef.current.timeScale().fitContent();
+      const dataLength = normalized.chartData.length;
+      if (dataLength > 0) {
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, dataLength - 80),
+          to: dataLength + 2,
+        });
+      }
       lastFitViewKeyRef.current = viewKey;
     }
   }, [normalized.chartData, viewKey]);
 
-  return <div ref={containerRef} className="h-full min-h-[420px] w-full" />;
-});
+  return <div ref={containerRef} className="h-full w-full" />;
+}));

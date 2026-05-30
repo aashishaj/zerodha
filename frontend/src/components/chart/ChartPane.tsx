@@ -1,5 +1,5 @@
 import { Ghost, RefreshCw, RotateCcw, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import type { Candle, Instrument, Quote, Timeframe } from "../../types";
 import { CandleChart, type CandleChartHandle } from "./CandleChart";
 import { EmptyState } from "../common/EmptyState";
@@ -36,7 +36,7 @@ interface ChartPaneProps {
   onTimeframeChange?: (timeframe: Timeframe) => void;
 }
 
-export function ChartPane({
+export const ChartPane = memo(function ChartPane({
   instrument,
   quote,
   candles,
@@ -51,20 +51,56 @@ export function ChartPane({
   onTimeframeChange,
 }: ChartPaneProps) {
   const chartRef = useRef<CandleChartHandle>(null);
-  const [hoveredCandle, setHoveredCandle] = useState<Candle | null>(null);
   const [activeDateRange, setActiveDateRange] = useState<DateRangeLabel>("1D");
   const openOrderTicket = useTradingStore((state) => state.openOrderTicket);
 
-  const handleCandleClick = (candle: Candle) => {
-    if (!instrument) return;
-    const tickSize = instrument.tick_size || 0.05;
+  // DOM refs for OHLC values — updated directly, zero React re-renders on hover
+  const oRef = useRef<HTMLSpanElement>(null);
+  const hRef = useRef<HTMLSpanElement>(null);
+  const lRef = useRef<HTMLSpanElement>(null);
+  const cRef = useRef<HTMLSpanElement>(null);
+  const timeRef = useRef<HTMLSpanElement>(null);
+
+  // Keep latestCandle in a ref so handleHoverCandle never needs to be recreated
+  const latestCandleRef = useRef<Candle | undefined>(undefined);
+  latestCandleRef.current = candles[candles.length - 1];
+
+  // Stable callback — no dependencies, reads latestCandleRef at call time
+  const handleHoverCandle = useCallback((candle: Candle | null) => {
+    const src = candle ?? latestCandleRef.current ?? null;
+    if (oRef.current) oRef.current.textContent = formatPrice(src?.open);
+    if (hRef.current) hRef.current.textContent = formatPrice(src?.high);
+    if (lRef.current) lRef.current.textContent = formatPrice(src?.low);
+    if (cRef.current) cRef.current.textContent = formatPrice(src?.close);
+    if (timeRef.current) {
+      if (candle?.time) {
+        try {
+          const parsed = parseChartDate(candle.time);
+          timeRef.current.textContent = parsed
+            ? parsed.toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
+            : "";
+          timeRef.current.style.visibility = "visible";
+        } catch {
+          timeRef.current.style.visibility = "hidden";
+        }
+      } else {
+        timeRef.current.style.visibility = "hidden";
+      }
+    }
+  }, []); // no deps — always stable
+
+  // Stable click handler using ref
+  const instrumentRef = useRef(instrument);
+  instrumentRef.current = instrument;
+
+  const handleCandleClick = useCallback((candle: Candle) => {
+    const instr = instrumentRef.current;
+    if (!instr) return;
+    const tickSize = instr.tick_size || 0.05;
     const rawPrice = candle.high + 2;
     const roundedPrice = Number((Math.round(rawPrice / tickSize) * tickSize).toFixed(2));
-    openOrderTicket(instrument, "BUY", {
-      orderType: "LIMIT",
-      price: roundedPrice,
-    });
-  };
+    openOrderTicket(instr, "BUY", { orderType: "LIMIT", price: roundedPrice });
+  }, [openOrderTicket]);
 
   const handleDateRangeClick = (label: DateRangeLabel, tf: Timeframe) => {
     setActiveDateRange(label);
@@ -73,7 +109,7 @@ export function ChartPane({
 
   if (!instrument) {
     return (
-      <div className="flex h-full items-center justify-center border-l border-[#eef1f4]">
+      <div className="flex flex-1 min-w-0 h-full items-center justify-center border-l border-[#eef1f4]">
         <EmptyState
           title={emptyTitle}
           description={emptyDescription}
@@ -83,28 +119,12 @@ export function ChartPane({
     );
   }
 
-  const latestCandle = candles[candles.length - 1];
-  const displayCandle = hoveredCandle ?? latestCandle;
-  const displayTime = useMemo(() => {
-    if (!hoveredCandle?.time) return null;
-    try {
-      const parsed = parseChartDate(hoveredCandle.time);
-      if (!parsed) return null;
-      return parsed.toLocaleString("en-IN", {
-        day: "2-digit",
-        month: "short",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return null;
-    }
-  }, [hoveredCandle]);
+  const latestCandle = latestCandleRef.current;
 
   return (
-    <div className="flex h-full min-w-0 flex-col border-l border-[#eef1f4] bg-white first:border-l-0">
-      {/* OHLC header */}
-      <div className="border-b border-[#eef1f4] px-4 py-2.5">
+    <div className="flex flex-1 min-w-0 h-full flex-col border-l border-[#eef1f4] bg-white first:border-l-0 overflow-hidden">
+      {/* OHLC header — flex-none so it never affects chart canvas height */}
+      <div className="flex-none border-b border-[#eef1f4] px-4 py-2.5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="truncate text-[14px] font-medium text-[#222]">{instrument.tradingsymbol}</div>
@@ -127,28 +147,22 @@ export function ChartPane({
           </div>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-[#6b7280]">
-          <div className="font-medium text-[#444]">
-            O <span className="text-[#222]">{formatPrice(displayCandle?.open ?? quote?.open)}</span>
-          </div>
-          <div className="font-medium text-[#444]">
-            H <span className="text-[#222]">{formatPrice(displayCandle?.high ?? quote?.high)}</span>
-          </div>
-          <div className="font-medium text-[#444]">
-            L <span className="text-[#222]">{formatPrice(displayCandle?.low ?? quote?.low)}</span>
-          </div>
-          <div className="font-medium text-[#444]">
-            C <span className="text-[#222]">{formatPrice(displayCandle?.close ?? quote?.last_price)}</span>
-          </div>
-          {displayTime && <div className="text-[#8a94a4]">{displayTime}</div>}
-          <div className={movementClass(quote?.change)}>
+        {/* Single-line OHLC row — DOM-updated on hover, no React re-render */}
+        <div className="mt-2 flex items-center gap-x-4 text-[11px] text-[#6b7280]">
+          <span className="font-medium text-[#444]">O <span ref={oRef}>{formatPrice(latestCandle?.open ?? quote?.open)}</span></span>
+          <span className="font-medium text-[#444]">H <span ref={hRef}>{formatPrice(latestCandle?.high ?? quote?.high)}</span></span>
+          <span className="font-medium text-[#444]">L <span ref={lRef}>{formatPrice(latestCandle?.low ?? quote?.low)}</span></span>
+          <span className="font-medium text-[#444]">C <span ref={cRef}>{formatPrice(latestCandle?.close ?? quote?.last_price)}</span></span>
+          {/* Always rendered (visibility hidden) so row height never changes */}
+          <span ref={timeRef} className="text-[#8a94a4]" style={{ visibility: "hidden" }} />
+          <span className={movementClass(quote?.change)}>
             {formatChange(quote?.change)} ({formatPercent(quote?.changePercent)})
-          </div>
-          {sameAsPrimary && <div className="text-[#0f9d58]">Same as primary</div>}
+          </span>
+          {sameAsPrimary && <span className="text-[#0f9d58]">Same as primary</span>}
         </div>
       </div>
 
-      {/* Chart canvas */}
+      {/* Chart canvas — fills all remaining space, overflow hidden prevents any bleed */}
       <div className="min-h-0 flex-1 overflow-hidden">
         {loading ? (
           <div className="flex h-full items-center justify-center">
@@ -161,7 +175,7 @@ export function ChartPane({
             candles={candles}
             lineColor="#ff5722"
             viewKey={`${instrument.instrument_token}:${timeframe}:${layoutKey ?? "default"}`}
-            onHoverCandle={setHoveredCandle}
+            onHoverCandle={handleHoverCandle}
             onClickCandle={handleCandleClick}
           />
         ) : (
@@ -175,8 +189,8 @@ export function ChartPane({
         )}
       </div>
 
-      {/* Bottom date-range preset bar */}
-      <div className="flex items-center justify-between border-t border-[#eef1f4] px-3 py-1.5">
+      {/* Footer — flex-none so it never affects chart canvas height */}
+      <div className="flex-none flex items-center justify-between border-t border-[#eef1f4] px-3 py-1.5">
         <div className="flex items-center gap-0.5">
           {DATE_RANGE_PRESETS.map(({ label, timeframe: tf }) => (
             <button
@@ -204,4 +218,4 @@ export function ChartPane({
       </div>
     </div>
   );
-}
+});

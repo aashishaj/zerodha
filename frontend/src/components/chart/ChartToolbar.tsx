@@ -52,6 +52,11 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
 
+  const focusPrimarySearch = () => {
+    setSearchTarget("primary");
+    window.dispatchEvent(new Event("instrument-search-focus"));
+  };
+
   const focusCompareSearch = () => {
     setSearchTarget("compare");
     window.dispatchEvent(new Event("instrument-search-focus"));
@@ -85,7 +90,13 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
       <div className="flex min-w-0 items-center gap-1">
         <div className="mr-1 flex h-7 items-center gap-1 rounded-[2px] border border-[#e5e7eb] px-2 text-[13px] text-[#444]">
           <Search className="h-3.5 w-3.5 text-[#9aa3af]" />
-          <span className="max-w-[140px] truncate font-medium">{selectedInstrument?.tradingsymbol ?? "Select symbol"}</span>
+          <button
+            title="Search symbol"
+            onClick={focusPrimarySearch}
+            className="max-w-[140px] truncate font-medium text-[#444] hover:text-[#222]"
+          >
+            {selectedInstrument?.tradingsymbol ?? "Select symbol"}
+          </button>
           <button
             title="Compare symbol"
             onClick={focusCompareSearch}

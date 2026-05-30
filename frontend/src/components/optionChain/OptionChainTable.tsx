@@ -1,3 +1,4 @@
+import { BarChart2 } from "lucide-react";
 import type { OptionChainRow } from "../../types";
 import { formatCompact, formatPrice, movementClass } from "../../utils/format";
 
@@ -6,6 +7,8 @@ interface OptionChainTableProps {
   atmStrike?: number;
   onOpenInstrument: (token: number) => void;
   onAddWatchlist: (token: number) => void;
+  onBuy: (token: number) => void;
+  onSell: (token: number) => void;
   compact?: boolean;
 }
 
@@ -16,12 +19,7 @@ const percentChange = (ltp?: number, change?: number) => {
   return Number(((change / previous) * 100).toFixed(2));
 };
 
-const oiShare = (value?: number, total?: number) => {
-  if (value == null || !total) return 0;
-  return Number(((value / total) * 100).toFixed(2));
-};
-
-const formatPercentCell = (value: number | null | undefined) => {
+const formatPct = (value: number | null | undefined) => {
   if (value == null) return "-";
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(2)}%`;
@@ -31,88 +29,178 @@ export function OptionChainTable({
   rows,
   atmStrike,
   onOpenInstrument,
-  onAddWatchlist,
+  onBuy,
+  onSell,
   compact = false,
 }: OptionChainTableProps) {
-  const totalCeOi = rows.reduce((sum, row) => sum + (row.ceOi ?? 0), 0);
-  const totalPeOi = rows.reduce((sum, row) => sum + (row.peOi ?? 0), 0);
+  const totalCeOi = rows.reduce((s, r) => s + (r.ceOi ?? 0), 0);
+  const totalPeOi = rows.reduce((s, r) => s + (r.peOi ?? 0), 0);
+  const maxCeOi = Math.max(...rows.map((r) => r.ceOi ?? 0), 1);
+  const maxPeOi = Math.max(...rows.map((r) => r.peOi ?? 0), 1);
 
-  const renderLtpCell = (
-    side: "ce" | "pe",
-    row: OptionChainRow,
-    instrument = side === "ce" ? row.ceInstrument : row.peInstrument,
-    ltp = side === "ce" ? row.ceLtp : row.peLtp,
-  ) => {
-    if (!instrument) return <span className="text-[#9aa3af]">-</span>;
-
-    return (
-      <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          className="font-semibold text-[#273449]"
-          onClick={() => onOpenInstrument(instrument.instrument_token)}
-        >
-          {formatPrice(ltp)}
-        </button>
-        <button
-          type="button"
-          className="rounded-[3px] border border-[#d9e1e8] bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[#536277]"
-          onClick={() => onAddWatchlist(instrument.instrument_token)}
-        >
-          Watch
-        </button>
-      </div>
-    );
+  const oiShare = (val?: number, total?: number) => {
+    if (val == null || !total) return 0;
+    return Number(((val / total) * 100).toFixed(2));
   };
 
-  return (
-    <div className="min-h-0 overflow-hidden bg-white">
-      <table className={`min-w-full ${compact ? "text-[12px]" : "text-[13px]"}`}>
-        <thead className="sticky top-0 z-10 bg-[#fafbfd] uppercase tracking-[0.14em] text-[#76839a]">
-          <tr>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Call OI %</th>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Call OI</th>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Call Change %</th>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Call LTP</th>
-            <th className="px-4 py-3 text-center text-[10px] font-semibold">Strike</th>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Put LTP</th>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Put Change %</th>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Put OI</th>
-            <th className="px-4 py-3 text-left text-[10px] font-semibold">Put OI %</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const ceChangePct = percentChange(row.ceLtp, row.ceChange);
-            const peChangePct = percentChange(row.peLtp, row.peChange);
-            const ceOiPct = oiShare(row.ceOi, totalCeOi);
-            const peOiPct = oiShare(row.peOi, totalPeOi);
-            const isAtm = atmStrike != null && row.strike === atmStrike;
+  const fontSize = compact ? "text-[11px]" : "text-[12px]";
 
-            return (
-              <tr key={row.strike} className="h-11 border-t border-[#edf1f5] bg-white">
-                <td className={`px-4 py-2.5 ${movementClass(ceOiPct)}`}>{formatPercentCell(ceOiPct)}</td>
-                <td className="px-4 py-2.5 text-[#445064]">{formatCompact(row.ceOi)}</td>
-                <td className={`px-4 py-2.5 ${movementClass(ceChangePct)}`}>{formatPercentCell(ceChangePct)}</td>
-                <td className="px-4 py-2.5">{renderLtpCell("ce", row)}</td>
-                <td className="px-4 py-2.5 text-center">
-                  <span
-                    className={`inline-flex min-w-[54px] items-center justify-center rounded-md px-2 py-1 font-semibold ${
-                      isAtm ? "bg-[#4b4f58] text-white" : "text-[#273449]"
-                    }`}
-                  >
-                    {row.strike}
+  return (
+    <table className={`min-w-full border-collapse ${fontSize}`}>
+      <thead className="sticky top-0 z-10 bg-[#fafbfd]">
+        <tr className="border-b border-[#e8edf3]">
+          {/* Call side */}
+          <th className="w-[8%] px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">OI %</th>
+          <th className="w-[8%] px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">OI</th>
+          <th className="w-[8%] px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">Chg %</th>
+          <th className="w-[12%] px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">Call LTP</th>
+          {/* Strike center */}
+          <th className="w-[8%] px-3 py-2.5 text-center text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">Strike</th>
+          {/* Put side */}
+          <th className="w-[12%] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">Put LTP</th>
+          <th className="w-[8%] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">Chg %</th>
+          <th className="w-[8%] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">OI</th>
+          <th className="w-[8%] px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#76839a]">OI %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => {
+          const ceChangePct = percentChange(row.ceLtp, row.ceChange);
+          const peChangePct = percentChange(row.peLtp, row.peChange);
+          const ceOiPct = oiShare(row.ceOi, totalCeOi);
+          const peOiPct = oiShare(row.peOi, totalPeOi);
+          const ceOiBarW = Math.round(((row.ceOi ?? 0) / maxCeOi) * 100);
+          const peOiBarW = Math.round(((row.peOi ?? 0) / maxPeOi) * 100);
+          const isAtm = atmStrike != null && row.strike === atmStrike;
+
+          const ceToken = row.ceInstrument?.instrument_token;
+          const peToken = row.peInstrument?.instrument_token;
+
+          return (
+            <tr
+              key={row.strike}
+              className={`group h-10 border-b border-[#f0f3f7] transition-colors hover:bg-[#f7f9fb] ${
+                isAtm ? "bg-[#fffbf0]" : "bg-white"
+              }`}
+            >
+              {/* ── Call OI % ── */}
+              <td className="relative px-3 py-2 text-right">
+                {/* OI bar grows left from right edge */}
+                <span
+                  className="pointer-events-none absolute inset-y-0 right-0 bg-[#dcecf9] opacity-50"
+                  style={{ width: `${ceOiBarW}%` }}
+                />
+                <span className={`relative ${movementClass(ceOiPct)}`}>{formatPct(ceOiPct)}</span>
+              </td>
+
+              {/* ── Call OI ── */}
+              <td className="relative px-3 py-2 text-right">
+                <span
+                  className="pointer-events-none absolute inset-y-0 right-0 bg-[#dcecf9] opacity-50"
+                  style={{ width: `${ceOiBarW}%` }}
+                />
+                <span className="relative text-[#445064]">{formatCompact(row.ceOi)}</span>
+              </td>
+
+              {/* ── Call Chg % ── */}
+              <td className={`px-3 py-2 text-right ${movementClass(ceChangePct)}`}>
+                {formatPct(ceChangePct)}
+              </td>
+
+              {/* ── Call LTP + hover B/S ── */}
+              <td className="px-3 py-2">
+                <div className="flex items-center justify-end gap-1.5">
+                  {/* Hover actions — opacity only, no layout shift */}
+                  {ceToken != null && (
+                    <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        onClick={() => onBuy(ceToken)}
+                        className="rounded bg-[#387ed1] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                      >B</button>
+                      <button
+                        onClick={() => onSell(ceToken)}
+                        className="rounded bg-[#e74c3c] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                      >S</button>
+                      <button
+                        onClick={() => onOpenInstrument(ceToken)}
+                        title="Open chart"
+                        className="rounded p-0.5 text-[#6b7280] hover:text-[#374151]"
+                      >
+                        <BarChart2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                  <span className="font-semibold text-[#273449]">
+                    {row.ceLtp != null ? formatPrice(row.ceLtp) : <span className="text-[#9aa3af]">-</span>}
                   </span>
-                </td>
-                <td className="px-4 py-2.5">{renderLtpCell("pe", row)}</td>
-                <td className={`px-4 py-2.5 ${movementClass(peChangePct)}`}>{formatPercentCell(peChangePct)}</td>
-                <td className="px-4 py-2.5 text-[#445064]">{formatCompact(row.peOi)}</td>
-                <td className={`px-4 py-2.5 ${movementClass(peOiPct)}`}>{formatPercentCell(peOiPct)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                </div>
+              </td>
+
+              {/* ── Strike ── */}
+              <td className="px-3 py-2 text-center">
+                <span
+                  className={`inline-flex min-w-[52px] items-center justify-center rounded px-2 py-0.5 font-semibold ${
+                    isAtm ? "bg-[#444c5c] text-white" : "text-[#273449]"
+                  }`}
+                >
+                  {row.strike}
+                </span>
+              </td>
+
+              {/* ── Put LTP + hover B/S ── */}
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-semibold text-[#273449]">
+                    {row.peLtp != null ? formatPrice(row.peLtp) : <span className="text-[#9aa3af]">-</span>}
+                  </span>
+                  {peToken != null && (
+                    <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        onClick={() => onBuy(peToken)}
+                        className="rounded bg-[#387ed1] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                      >B</button>
+                      <button
+                        onClick={() => onSell(peToken)}
+                        className="rounded bg-[#e74c3c] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                      >S</button>
+                      <button
+                        onClick={() => onOpenInstrument(peToken)}
+                        title="Open chart"
+                        className="rounded p-0.5 text-[#6b7280] hover:text-[#374151]"
+                      >
+                        <BarChart2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </td>
+
+              {/* ── Put Chg % ── */}
+              <td className={`px-3 py-2 text-left ${movementClass(peChangePct)}`}>
+                {formatPct(peChangePct)}
+              </td>
+
+              {/* ── Put OI ── */}
+              <td className="relative px-3 py-2 text-left">
+                <span
+                  className="pointer-events-none absolute inset-y-0 left-0 bg-[#fde8e8] opacity-50"
+                  style={{ width: `${peOiBarW}%` }}
+                />
+                <span className="relative text-[#445064]">{formatCompact(row.peOi)}</span>
+              </td>
+
+              {/* ── Put OI % ── */}
+              <td className="relative px-3 py-2 text-left">
+                <span
+                  className="pointer-events-none absolute inset-y-0 left-0 bg-[#fde8e8] opacity-50"
+                  style={{ width: `${peOiBarW}%` }}
+                />
+                <span className={`relative ${movementClass(peOiPct)}`}>{formatPct(peOiPct)}</span>
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
