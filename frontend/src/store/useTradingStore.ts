@@ -179,9 +179,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
         nearestExpiryOption(instruments, { underlying: "BANKNIFTY", side: "PE" }),
     ].filter(Boolean) as Instrument[];
 
-    const persisted = get().watchlist.filter((item) =>
-      instruments.some((instrument) => instrument.instrument_token === item.instrument_token),
-    );
+    // Load ALL persisted items — don't discard any based on instruments list match,
+    // as partial instruments endpoints or token type mismatches silently wipe the watchlist.
+    const persisted = get().watchlist;
 
     const defaultSymbols = Array.from(
       new Set(
@@ -198,7 +198,11 @@ export const useTradingStore = create<TradingState>((set, get) => ({
 
     const watchlist = persisted.length
       ? persisted.map((item) => {
-          const match = instruments.find((instrument) => instrument.instrument_token === item.instrument_token);
+          // Use Number() coercion so string tokens from older localStorage entries still match
+          const match = instruments.find(
+            (instrument) => Number(instrument.instrument_token) === Number(item.instrument_token),
+          );
+          // Update live data where possible; keep persisted data as-is when not found
           return match ? toWatchlistItem(match, quotes[match.tradingsymbol]) : item;
         })
       : seeded.map((instrument) => toWatchlistItem(instrument, quotes[instrument.tradingsymbol]));
