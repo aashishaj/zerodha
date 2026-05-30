@@ -1,0 +1,17 @@
+.env
+.venv/
+.python_packages/
+__pycache__/
+*.pyc
+.DS_Store
+.zerodha/
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+frontend/tsconfig.node.tsbuildinfo
+
+# Local legacy credential files
+full code/user.json
+full code/accesstoken.json

@@ -1,0 +1,7 @@
+tmp/
+secrets/
+tokens/
+*.env
+*.ini
+access_token.txt
+token*.json
