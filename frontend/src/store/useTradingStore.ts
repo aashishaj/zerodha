@@ -147,7 +147,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   searchOpen: false,
   searchTarget: "primary",
   activeSearchIndex: 0,
-  watchlist: watchlistService.load(),
+  watchlist: [],
   quotes: {},
   candles: {},
   profile: null,
@@ -162,10 +162,13 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   marketDepth: null,
   isMarketDepthOpen: false,
   async init() {
-    const [instruments, profile] = await Promise.all([
+    const [instruments, profile, savedWatchlist] = await Promise.all([
       instrumentsService.getInstruments(),
       marketDataService.getProfile(),
+      watchlistService.load(),
     ]);
+    // Seed the store with persisted items before any filtering logic
+    set({ watchlist: savedWatchlist });
 
     const seeded = [
       instruments.find((item) => item.tradingsymbol === "NIFTY 50"),
