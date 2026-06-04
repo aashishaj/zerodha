@@ -18,6 +18,8 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Timeframe } from "../../types";
 import { useTradingStore } from "../../store/useTradingStore";
+import { LayoutSetupPopover } from "./LayoutSetupPopover";
+import { IndicatorPopover } from "./IndicatorPopover";
 
 const timeframeOptions: Timeframe[] = ["5s", "10s", "15s", "30s", "1m", "2m", "3m", "4m", "5m", "10m", "15m", "30m", "1d", "1w"];
 
@@ -49,8 +51,16 @@ function ToolButton({
 export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps) {
   const selectedInstrument = useTradingStore((state) => state.selectedInstrument);
   const setSearchTarget = useTradingStore((state) => state.setSearchTarget);
+  const selectedLayout = useTradingStore((state) => state.selectedLayout);
+  const setLayout = useTradingStore((state) => state.setLayout);
+  const indicators = useTradingStore((state) => state.indicators);
+  const setIndicators = useTradingStore((state) => state.setIndicators);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const layoutMenuRef = useRef<HTMLDivElement>(null);
+  const [indicatorsOpen, setIndicatorsOpen] = useState(false);
+  const indicatorsMenuRef = useRef<HTMLDivElement>(null);
 
   const focusPrimarySearch = () => {
     setSearchTarget("primary");
@@ -84,6 +94,47 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
       window.removeEventListener("keydown", onKey);
     };
   }, [timeframeMenuOpen]);
+
+  useEffect(() => {
+    if (!layoutOpen) return;
+
+    const onPointer = (event: MouseEvent) => {
+      if (!layoutMenuRef.current?.contains(event.target as Node)) {
+        setLayoutOpen(false);
+      }
+    };
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setLayoutOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [layoutOpen]);
+
+  useEffect(() => {
+    if (!indicatorsOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!indicatorsMenuRef.current?.contains(event.target as Node)) setIndicatorsOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIndicatorsOpen(false);
+    };
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [indicatorsOpen]);
+
+  const anyIndicatorActive = indicators.vwap || indicators.smma.enabled;
 
   return (
     <div className="flex h-11 items-center justify-between border-b border-[#e8edf3] bg-white px-6">
@@ -137,12 +188,45 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
         <ToolButton label="Candles">
           <CandlestickChart className="h-4 w-4" />
         </ToolButton>
-        <button className="flex h-7 items-center rounded-sm border border-transparent px-2 text-[12px] text-[#6b7280] hover:bg-[#f7f8fa]">
-          Indicators
-        </button>
-        <ToolButton label="Layout">
-          <Grid2X2 className="h-4 w-4" />
-        </ToolButton>
+        <div ref={indicatorsMenuRef} className="relative">
+          <button
+            onClick={() => setIndicatorsOpen((v) => !v)}
+            className={`flex h-7 items-center rounded-sm border px-2 text-[12px] transition hover:bg-[#f7f8fa] ${
+              indicatorsOpen || anyIndicatorActive
+                ? "border-[#2f7df6] bg-[#eff5ff] text-[#2f7df6]"
+                : "border-transparent text-[#6b7280]"
+            }`}
+          >
+            Indicators
+          </button>
+          {indicatorsOpen && (
+            <IndicatorPopover
+              indicators={indicators}
+              onChange={setIndicators}
+              onClose={() => setIndicatorsOpen(false)}
+            />
+          )}
+        </div>
+        <div ref={layoutMenuRef} className="relative">
+          <button
+            title="Layout setup"
+            onClick={() => setLayoutOpen((v) => !v)}
+            className={`flex h-7 min-w-7 items-center justify-center rounded-[2px] border px-1.5 text-[#6b7280] transition hover:bg-[#f7f8fa] ${
+              layoutOpen || selectedLayout !== "single"
+                ? "border-[#2f7df6] bg-[#eff5ff] text-[#2f7df6]"
+                : "border-transparent"
+            }`}
+          >
+            <Grid2X2 className="h-4 w-4" />
+          </button>
+          {layoutOpen && (
+            <LayoutSetupPopover
+              selectedLayout={selectedLayout}
+              onSelectLayout={setLayout}
+              onClose={() => setLayoutOpen(false)}
+            />
+          )}
+        </div>
         <ToolButton label="Checklist">
           <SquareCheck className="h-4 w-4" />
         </ToolButton>

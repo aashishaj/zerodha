@@ -1,12 +1,15 @@
 import { Bell, ShoppingCart, UserCircle2 } from "lucide-react";
+import { useState } from "react";
 import { formatChange, formatPercent, formatPrice, movementClass } from "../../utils/format";
 import { useTradingStore } from "../../store/useTradingStore";
+import { ProfileSettingsModal } from "./ProfileSettingsModal";
 
 const navItems = ["Dashboard", "Orders", "Holdings", "Positions", "Bids", "Funds"];
 
 export function TopHeader() {
   const profile = useTradingStore((state) => state.profile);
-  const quotes = useTradingStore((state) => state.quotes);
+  const quotes  = useTradingStore((state) => state.quotes);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const indices = ["NIFTY 50", "SENSEX"].filter((symbol) => quotes[symbol]);
 
   return (
@@ -47,11 +50,16 @@ export function TopHeader() {
         <button className="flex h-8 w-8 items-center justify-center rounded-sm border border-transparent text-[#7b8594] transition hover:bg-[#f7f8fa]">
           <Bell className="h-4 w-4" />
         </button>
-        <div className="ml-1 flex items-center gap-2 rounded-sm px-1 py-1 text-[13px] text-[#444]">
+        <button
+          onClick={() => setSettingsOpen((v) => !v)}
+          className="ml-1 flex items-center gap-2 rounded-sm px-2 py-1 text-[13px] text-[#444] transition-colors hover:bg-[#f7f8fa]"
+        >
           <UserCircle2 className="h-5 w-5 text-[#9aa3af]" />
           <span className="font-medium">{profile?.name ?? profile?.userId ?? "User"}</span>
-        </div>
+        </button>
       </div>
+
+      {settingsOpen && <ProfileSettingsModal onClose={() => setSettingsOpen(false)} />}
     </header>
   );
 }

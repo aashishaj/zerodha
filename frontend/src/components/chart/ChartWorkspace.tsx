@@ -10,7 +10,6 @@ export function ChartWorkspace() {
   const {
     selectedInstrument,
     compareInstrument,
-    clearCompareInstrument,
     timeframe,
     mainTab,
     setMainTab,
@@ -24,6 +23,10 @@ export function ChartWorkspace() {
     refreshOptionChain,
     selectedUnderlying,
     setOptionChainFilters,
+    selectedLayout,
+    activePaneId,
+    setLayout,
+    setActivePaneId,
   } = useTradingStore();
 
   const selectedCandles = useMemo(
@@ -36,29 +39,43 @@ export function ChartWorkspace() {
     [candles, compareInstrument, timeframe],
   );
 
+  // Quotes: lightweight, refresh every 5s
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
-      try {
-        await refreshQuotes();
-        if (mainTab === "chart") {
-          await Promise.all([refreshVisibleCharts(), refreshOptionChain()]);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error("Live chart refresh failed:", error);
-        }
-      }
+      try { await refreshQuotes(); }
+      catch (error) { if (!cancelled) console.error("Quote refresh failed:", error); }
     };
     void refresh();
-    const interval = window.setInterval(() => {
-      void refresh();
-    }, 5000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
+    const interval = window.setInterval(() => { void refresh(); }, 5000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [refreshQuotes]);
+
+  // Chart candles: incremental fetch every 10s so live candles stay current
+  useEffect(() => {
+    if (mainTab !== "chart") return;
+    let cancelled = false;
+    const refresh = async () => {
+      try { await refreshVisibleCharts(); }
+      catch (error) { if (!cancelled) console.error("Chart refresh failed:", error); }
     };
-  }, [mainTab, refreshQuotes, refreshVisibleCharts, refreshOptionChain, timeframe, selectedInstrument]);
+    void refresh();
+    const interval = window.setInterval(() => { void refresh(); }, 10_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [mainTab, refreshVisibleCharts, timeframe, selectedInstrument]);
+
+  // Option chain: heavier, keep at 60s
+  useEffect(() => {
+    if (mainTab !== "chart") return;
+    let cancelled = false;
+    const refresh = async () => {
+      try { await refreshOptionChain(); }
+      catch (error) { if (!cancelled) console.error("Option chain refresh failed:", error); }
+    };
+    void refresh();
+    const interval = window.setInterval(() => { void refresh(); }, 60_000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, [mainTab, refreshOptionChain, selectedInstrument]);
 
   useEffect(() => {
     if (!selectedInstrument) return;
@@ -89,8 +106,16 @@ export function ChartWorkspace() {
             />
           </div>
         ) : (
-          /* absolute inset-0: size is fixed by CSS, never recalculated by flex */
-          <div className="absolute inset-0 flex overflow-hidden">
+          /* absolute inset-0: size is fixed by CSS, never recalculated by flex/grid */
+          <div
+            className={`absolute inset-0 overflow-hidden ${
+              selectedLayout === "twoVertical"
+                ? "grid grid-cols-2"
+                : selectedLayout === "twoHorizontal"
+                  ? "grid grid-cols-1 grid-rows-2"
+                  : "flex"
+            }`}
+          >
             <ChartPane
               instrument={selectedInstrument}
               quote={selectedInstrument ? quotes[selectedInstrument.tradingsymbol] : undefined}
@@ -99,18 +124,31 @@ export function ChartWorkspace() {
               loading={loadingChart}
               onRefresh={selectedInstrument ? () => void refreshInstrument(selectedInstrument) : undefined}
               onTimeframeChange={(value) => void setTimeframe(value)}
+              isActive={activePaneId === "primary"}
+              onActivate={() => setActivePaneId("primary")}
+              showClose={selectedLayout !== "single"}
+              onClose={() => setLayout("single")}
             />
-            <ChartPane
-              instrument={compareInstrument}
-              quote={compareInstrument ? quotes[compareInstrument.tradingsymbol] : undefined}
-              candles={compareCandles}
-              timeframe={timeframe}
-              layoutKey="compare"
-              emptyTitle="No data here"
-              emptyDescription="Use the + button in the toolbar to compare a second instrument."
-              onClear={compareInstrument ? clearCompareInstrument : undefined}
-              onTimeframeChange={(value) => void setTimeframe(value)}
-            />
+            {selectedLayout !== "single" && (
+              <ChartPane
+                instrument={compareInstrument}
+                quote={compareInstrument ? quotes[compareInstrument.tradingsymbol] : undefined}
+                candles={compareCandles}
+                timeframe={timeframe}
+                layoutKey="compare"
+                emptyTitle="No data here"
+                emptyDescription="Use the + button in the toolbar to load a second instrument."
+                sameAsPrimary={
+                  !!compareInstrument &&
+                  compareInstrument.instrument_token === selectedInstrument?.instrument_token
+                }
+                onTimeframeChange={(value) => void setTimeframe(value)}
+                isActive={activePaneId === "compare"}
+                onActivate={() => setActivePaneId("compare")}
+                showClose
+                onClose={() => setLayout("single")}
+              />
+            )}
           </div>
         )}
       </div>

@@ -2,19 +2,27 @@ import { useEffect, useState } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import { Loader } from "./components/common/Loader";
 import { ErrorBoundary } from "./components/common/ErrorBoundary";
+import { LoginPage } from "./components/auth/LoginPage";
 import { useTradingStore } from "./store/useTradingStore";
 
 export default function App() {
   const init = useTradingStore((state) => state.init);
   const isReady = useTradingStore((state) => state.isReady);
   const [initError, setInitError] = useState<string | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
     void init().catch((error: unknown) => {
       console.error("Dashboard init failed:", error);
       setInitError(error instanceof Error ? error.message : "Unknown initialization error");
     });
-  }, [init]);
+  }, [init, isAuthenticated]);
+
+  // Show login page until authenticated
+  if (!isAuthenticated) {
+    return <LoginPage onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   if (initError) {
     return (
