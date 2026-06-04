@@ -8,7 +8,10 @@ import { optionChainService } from "../services/optionChainService";
 import { parseChartDate } from "../utils/dates";
 import type {
   Candle,
+  IndicatorSettings,
   Instrument,
+  LayoutId,
+  SLSettings,
   MainTab,
   MarketDepth,
   OptionChainRow,
@@ -75,6 +78,14 @@ interface TradingState {
   marketDepthInstrument: Instrument | null;
   marketDepth: MarketDepth | null;
   isMarketDepthOpen: boolean;
+  selectedLayout: LayoutId;
+  activePaneId: "primary" | "compare";
+  setLayout: (layout: LayoutId) => void;
+  setActivePaneId: (id: "primary" | "compare") => void;
+  indicators: IndicatorSettings;
+  setIndicators: (settings: IndicatorSettings) => void;
+  slSettings: SLSettings;
+  setSLSettings: (settings: SLSettings) => void;
   init: () => Promise<void>;
   refreshQuotes: (symbols?: string[]) => Promise<void>;
   refreshVisibleCharts: () => Promise<void>;
@@ -161,6 +172,23 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   marketDepthInstrument: null,
   marketDepth: null,
   isMarketDepthOpen: false,
+  selectedLayout: (localStorage.getItem("chartLayout") as LayoutId | null) ?? "single",
+  activePaneId: "primary",
+  slSettings: ((): SLSettings => {
+    try {
+      return JSON.parse(localStorage.getItem("slSettings") ?? "null") as SLSettings
+        ?? { buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
+    } catch {
+      return { buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
+    }
+  })(),
+  indicators: ((): IndicatorSettings => {
+    try {
+      return JSON.parse(localStorage.getItem("chartIndicators") ?? "null") as IndicatorSettings ?? { vwap: false, smma: { enabled: false, period: 20 } };
+    } catch {
+      return { vwap: false, smma: { enabled: false, period: 20 } };
+    }
+  })(),
   async init() {
     const [instruments, profile, savedWatchlist] = await Promise.all([
       instrumentsService.getInstruments(),
@@ -263,15 +291,22 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     }));
   },
   async refreshVisibleCharts() {
-    const { selectedInstrument, compareInstrument, timeframe } = get();
+    const { selectedInstrument, compareInstrument, timeframe, candles } = get();
     const instruments = [selectedInstrument, compareInstrument].filter(Boolean) as Instrument[];
     if (!instruments.length) return;
 
     const responses = await Promise.all(
-      instruments.map(async (instrument) => ({
-        key: `${instrument.instrument_token}:${timeframe}`,
-        candles: await chartService.getCandles(instrument.instrument_token, timeframe),
-      })),
+      instruments.map(async (instrument) => {
+        const key = `${instrument.instrument_token}:${timeframe}`;
+        const existing = candles[key] ?? [];
+        // Incremental fetch: only request candles since the last known candle
+        const lastCandle = existing[existing.length - 1];
+        const from = lastCandle ? lastCandle.time : undefined;
+        return {
+          key,
+          candles: await chartService.getCandles(instrument.instrument_token, timeframe, from),
+        };
+      }),
     );
 
     set((state) => ({
@@ -381,6 +416,28 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   },
   closeMarketDepth() {
     set({ isMarketDepthOpen: false, marketDepthInstrument: null, marketDepth: null });
+  },
+  setLayout(layout) {
+    localStorage.setItem("chartLayout", layout);
+    if (layout === "single") {
+      set({ selectedLayout: layout, compareInstrument: null, activePaneId: "primary" });
+    } else {
+      set({ selectedLayout: layout });
+      if (!get().compareInstrument && get().selectedInstrument) {
+        void get().setCompareInstrument(get().selectedInstrument!);
+      }
+    }
+  },
+  setActivePaneId(id) {
+    set({ activePaneId: id });
+  },
+  setIndicators(settings) {
+    localStorage.setItem("chartIndicators", JSON.stringify(settings));
+    set({ indicators: settings });
+  },
+  setSLSettings(settings) {
+    localStorage.setItem("slSettings", JSON.stringify(settings));
+    set({ slSettings: settings });
   },
   async setOptionChainFilters(underlying, expiry) {
     set({ selectedUnderlying: underlying, selectedExpiry: expiry });

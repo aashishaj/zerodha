@@ -1,7 +1,24 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { ColorType, CrosshairMode, createChart } from "lightweight-charts";
-import type { Candle } from "../../types";
+import { ColorType, CrosshairMode, TickMarkType, createChart } from "lightweight-charts";
+import type { Candle, IndicatorSettings } from "../../types";
 import { parseChartDate } from "../../utils/dates";
+
+// IST = UTC+5:30 = 19800 seconds ahead of UTC
+const IST_OFFSET_S = 19800;
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"] as const;
+
+function istDate(utcSeconds: number): Date {
+  return new Date((utcSeconds + IST_OFFSET_S) * 1000);
+}
+function fmtTime(d: Date): string {
+  return `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}`;
+}
+function fmtDay(d: Date): string {
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+}
+function fmtTimeSeconds(d: Date): string {
+  return `${fmtTime(d)}:${String(d.getUTCSeconds()).padStart(2,"0")}`;
+}
 
 type ChartCandle = {
   time: never;
@@ -19,14 +36,68 @@ type ChartVolume = {
 
 export interface CandleChartHandle {
   resetView: () => void;
+  applyTick: (price: number) => void;
 }
 
 interface CandleChartProps {
   candles: Candle[];
   lineColor?: string;
   viewKey?: string;
+  indicators?: IndicatorSettings;
   onHoverCandle?: (candle: Candle | null) => void;
-  onClickCandle?: (candle: Candle) => void;
+  onClickCandle?: (candle: Candle, point: { x: number; y: number }) => void;
+}
+
+type LinePoint = { time: never; value: number };
+
+function computeVWAP(candles: Candle[]): LinePoint[] {
+  const out: LinePoint[] = [];
+  let cumTP = 0;
+  let cumVol = 0;
+  let lastDay = "";
+
+  for (const c of candles) {
+    const ts = toChartTimestamp(c.time);
+    if (ts === null) continue;
+    const vol = Number(c.volume ?? 0);
+    if (vol <= 0) continue;
+
+    const day = new Date(ts * 1000).toISOString().slice(0, 10);
+    if (day !== lastDay) { cumTP = 0; cumVol = 0; lastDay = day; }
+
+    const tp = (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+    cumTP += tp * vol;
+    cumVol += vol;
+    out.push({ time: ts as never, value: cumTP / cumVol });
+  }
+  return out;
+}
+
+function computeSMMA(candles: Candle[], period: number): LinePoint[] {
+  if (period < 2) return [];
+  const out: LinePoint[] = [];
+  let smma: number | null = null;
+  let sum = 0;
+  let count = 0;
+
+  for (const c of candles) {
+    const ts = toChartTimestamp(c.time);
+    if (ts === null) continue;
+    const close = Number(c.close);
+
+    if (smma === null) {
+      sum += close;
+      count++;
+      if (count === period) {
+        smma = sum / period;
+        out.push({ time: ts as never, value: smma });
+      }
+    } else {
+      smma = (smma * (period - 1) + close) / period;
+      out.push({ time: ts as never, value: smma });
+    }
+  }
+  return out;
 }
 
 function toChartTimestamp(value: string | null | undefined) {
@@ -89,17 +160,23 @@ function normalizeCandles(rawCandles: Candle[]): {
 }
 
 export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(function CandleChart(
-  { candles, lineColor = "#1976d2", viewKey, onHoverCandle, onClickCandle },
+  { candles, lineColor = "#1976d2", viewKey, indicators, onHoverCandle, onClickCandle },
   forwardedRef,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
   const seriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addCandlestickSeries"]> | null>(null);
   const volumeSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addHistogramSeries"]> | null>(null);
+  const vwapSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
+  const smmaSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
   const cleanedCandlesRef = useRef<Candle[]>([]);
   const hoverCallbackRef = useRef(onHoverCandle);
   const clickCallbackRef = useRef(onClickCandle);
   const lastFitViewKeyRef = useRef<string | undefined>(undefined);
+  // Tracks how many bars were loaded at last render so we can diff
+  const prevDataLengthRef = useRef(0);
+  // Accumulates live H/L/C between historical polls for the forming bar
+  const liveBarRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
 
   const normalized = useMemo(() => normalizeCandles(candles), [candles]);
 
@@ -126,6 +203,40 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
         chartRef.current.timeScale().fitContent();
       }
     },
+    applyTick(price: number) {
+      if (!seriesRef.current || cleanedCandlesRef.current.length === 0) return;
+      const lastCandle = cleanedCandlesRef.current[cleanedCandlesRef.current.length - 1];
+      const ts = toChartTimestamp(lastCandle.time);
+      if (ts === null) return;
+
+      if (!liveBarRef.current || liveBarRef.current.time !== ts) {
+        // New candle boundary or first tick — seed from historical data
+        liveBarRef.current = {
+          time: ts,
+          open: Number(lastCandle.open),
+          high: Number(lastCandle.high),
+          low: Number(lastCandle.low),
+          close: price,
+        };
+      } else {
+        // Same forming bar — accumulate H/L, update close
+        liveBarRef.current = {
+          time: ts,
+          open: liveBarRef.current.open,
+          high: Math.max(liveBarRef.current.high, price),
+          low: Math.min(liveBarRef.current.low, price),
+          close: price,
+        };
+      }
+      const bar = liveBarRef.current;
+      seriesRef.current.update({
+        time: bar.time as never,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+      });
+    },
   }));
 
   useEffect(() => {
@@ -149,11 +260,30 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
           bottom: 0.22,
         },
       },
+      // Display all times in IST (UTC+5:30) regardless of the browser's local timezone
+      localization: {
+        timeFormatter: (ts: number) => {
+          const d = istDate(ts);
+          return `${fmtDay(d)} ${fmtTime(d)}`;
+        },
+      },
       timeScale: {
         borderColor: "#eef1f4",
         rightOffset: 2,
         barSpacing: 10,
         minBarSpacing: 4,
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (ts: number, tickMarkType: TickMarkType) => {
+          const d = istDate(ts);
+          switch (tickMarkType) {
+            case TickMarkType.Year:        return String(d.getUTCFullYear());
+            case TickMarkType.Month:       return MONTHS[d.getUTCMonth()];
+            case TickMarkType.DayOfMonth:  return fmtDay(d);
+            case TickMarkType.TimeWithSeconds: return fmtTimeSeconds(d);
+            default:                       return fmtTime(d);
+          }
+        },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
@@ -231,9 +361,33 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
         null;
 
       if (matched) {
-        clickCallback(matched);
+        const pt = {
+          x: param.sourceEvent?.clientX ?? 0,
+          y: param.sourceEvent?.clientY ?? 0,
+        };
+        clickCallback(matched, pt);
       }
     };
+
+    const vwapSeries = chart.addLineSeries({
+      color: "#e67e22",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      title: "VWAP",
+    });
+    vwapSeriesRef.current = vwapSeries;
+
+    const smmaSeries = chart.addLineSeries({
+      color: "#8e44ad",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      title: "SMMA",
+    });
+    smmaSeriesRef.current = smmaSeries;
 
     chart.subscribeCrosshairMove(handleCrosshairMove);
     chart.subscribeClick(handleClick);
@@ -243,27 +397,53 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       chart.unsubscribeClick(handleClick);
       seriesRef.current = null;
       volumeSeriesRef.current = null;
+      vwapSeriesRef.current = null;
+      smmaSeriesRef.current = null;
       chartRef.current = null;
       lastFitViewKeyRef.current = undefined;
+      prevDataLengthRef.current = 0;
+      liveBarRef.current = null;
       chart.remove();
     };
   }, [lineColor, normalized.chartData.length]);
 
   useEffect(() => {
+    if (!vwapSeriesRef.current || !smmaSeriesRef.current) return;
+    vwapSeriesRef.current.setData(indicators?.vwap ? computeVWAP(normalized.cleaned) : []);
+    smmaSeriesRef.current.setData(
+      indicators?.smma.enabled ? computeSMMA(normalized.cleaned, indicators.smma.period) : [],
+    );
+  }, [normalized, indicators]);
+
+  useEffect(() => {
     if (!seriesRef.current || !volumeSeriesRef.current || !chartRef.current) return;
 
-    seriesRef.current.setData(normalized.chartData);
-    volumeSeriesRef.current.setData(normalized.volumeData);
+    const isNewView = viewKey !== lastFitViewKeyRef.current;
+    const prev = prevDataLengthRef.current;
+    const curr = normalized.chartData.length;
+
+    if (isNewView || prev === 0 || curr < prev) {
+      // Full reload: new instrument/timeframe, first load, or data shrunk (e.g. after reset)
+      seriesRef.current.setData(normalized.chartData);
+      volumeSeriesRef.current.setData(normalized.volumeData);
+    } else {
+      // Incremental: use series.update() for the forming bar + any new bars.
+      // Starting from prev-1 catches an in-progress candle whose OHLC changed since last tick.
+      for (let i = Math.max(0, prev - 1); i < curr; i++) {
+        seriesRef.current.update(normalized.chartData[i]);
+        volumeSeriesRef.current.update(normalized.volumeData[i]);
+      }
+    }
+
+    prevDataLengthRef.current = curr;
+    liveBarRef.current = null; // re-sync from fresh historical data on next tick
     applyPriceScale();
 
-    if (viewKey !== lastFitViewKeyRef.current) {
-      const dataLength = normalized.chartData.length;
-      if (dataLength > 0) {
-        chartRef.current.timeScale().setVisibleLogicalRange({
-          from: Math.max(0, dataLength - 80),
-          to: dataLength + 2,
-        });
-      }
+    if (isNewView && curr > 0) {
+      chartRef.current.timeScale().setVisibleLogicalRange({
+        from: Math.max(0, curr - 80),
+        to: curr + 2,
+      });
       lastFitViewKeyRef.current = viewKey;
     }
   }, [normalized.chartData, viewKey]);

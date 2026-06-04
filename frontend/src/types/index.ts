@@ -15,6 +15,23 @@ export type Timeframe =
   | "1d"
   | "1w";
 export type MainTab = "chart" | "option-chain" | "fundamentals";
+export type LayoutId = "single" | "twoVertical" | "twoHorizontal";
+
+export interface IndicatorSettings {
+  vwap: boolean;
+  smma: { enabled: boolean; period: number };
+}
+
+export interface SLSettings {
+  /** Points added above High for BUY SL trigger price */
+  buyTriggerOffset: number;
+  /** Points added above High for BUY SL limit price */
+  buyPriceOffset: number;
+  /** Points subtracted below Low for SELL SL trigger price */
+  sellTriggerOffset: number;
+  /** Points subtracted below Low for SELL SL limit price */
+  sellPriceOffset: number;
+}
 
 export interface Instrument {
   instrument_token: number;

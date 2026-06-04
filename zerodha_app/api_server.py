@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,12 +43,101 @@ SUPPORTED_HISTORICAL_INTERVALS = {
 }
 
 
+FRONTEND_URL = "http://127.0.0.1:5173"
+
+
 @dataclass(slots=True)
 class APIOptions:
     settings: Settings
     host: str = "127.0.0.1"
     port: int = 8080
     login_if_needed: bool = False
+
+
+class TickBroadcaster:
+    """Runs KiteTicker in a background thread; fans ticks out to SSE clients."""
+
+    def __init__(self, api_key: str, access_token: str) -> None:
+        self._api_key = api_key
+        self._access_token = access_token
+        self._clients: dict[str, queue.Queue[dict[str, Any]]] = {}
+        self._subscribed: set[int] = set()
+        self._lock = threading.Lock()
+        self._ticker: Any | None = None
+
+    def connect_client(self, tokens: list[int]) -> tuple[str, queue.Queue[dict[str, Any]]]:
+        """Register a new SSE client; subscribes tokens and returns (client_id, queue)."""
+        client_id = str(uuid.uuid4())
+        q: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=200)
+        with self._lock:
+            self._clients[client_id] = q
+            self._ensure_started()
+            new_tokens = [t for t in tokens if t not in self._subscribed]
+            if new_tokens and self._ticker is not None:
+                try:
+                    self._ticker.subscribe(new_tokens)
+                    self._ticker.set_mode(self._ticker.MODE_FULL, new_tokens)
+                    self._subscribed.update(new_tokens)
+                except Exception:
+                    LOGGER.exception("TickBroadcaster: failed to subscribe tokens %s", new_tokens)
+        return client_id, q
+
+    def disconnect_client(self, client_id: str) -> None:
+        with self._lock:
+            self._clients.pop(client_id, None)
+
+    def _ensure_started(self) -> None:
+        if self._ticker is not None:
+            return
+        try:
+            from kiteconnect import KiteTicker as _KT
+        except ModuleNotFoundError:
+            LOGGER.warning("TickBroadcaster: kiteconnect not installed — live ticks unavailable")
+            return
+        ticker = _KT(api_key=self._api_key, access_token=self._access_token)
+        ticker.on_connect = self._on_connect
+        ticker.on_ticks = self._on_ticks
+        ticker.on_close = self._on_close
+        ticker.on_error = self._on_error
+        ticker.connect(threaded=True)
+        self._ticker = ticker
+        LOGGER.info("TickBroadcaster: KiteTicker started")
+
+    def _on_connect(self, ws: Any, _response: Any) -> None:
+        with self._lock:
+            tokens = list(self._subscribed)
+        if tokens:
+            ws.subscribe(tokens)
+            ws.set_mode(ws.MODE_FULL, tokens)
+        LOGGER.info("TickBroadcaster: connected, subscribed %d tokens", len(tokens))
+
+    def _on_ticks(self, _ws: Any, ticks: list[dict[str, Any]]) -> None:
+        with self._lock:
+            clients = list(self._clients.values())
+        if not clients:
+            return
+        for tick in ticks:
+            ts = tick.get("exchange_timestamp") or tick.get("last_trade_time")
+            payload: dict[str, Any] = {
+                "instrument_token": tick.get("instrument_token"),
+                "last_price": tick.get("last_price"),
+                "timestamp": ts.isoformat() if hasattr(ts, "isoformat") else datetime.now().isoformat(),
+                "ohlc": tick.get("ohlc"),
+                "volume": tick.get("volume_traded") or tick.get("volume"),
+            }
+            for q in clients:
+                try:
+                    q.put_nowait(payload)
+                except queue.Full:
+                    pass  # slow client — drop tick rather than block
+
+    def _on_close(self, _ws: Any, code: int, reason: str) -> None:
+        LOGGER.info("TickBroadcaster: closed code=%s reason=%s", code, reason)
+        with self._lock:
+            self._ticker = None  # allow restart on next connect_client call
+
+    def _on_error(self, _ws: Any, code: int, reason: str) -> None:
+        LOGGER.error("TickBroadcaster: error code=%s reason=%s", code, reason)
 
 
 class ZerodhaFrontendAPI:
@@ -56,6 +148,8 @@ class ZerodhaFrontendAPI:
         self._raw_instruments: list[dict[str, Any]] | None = None
         self._instrument_by_token: dict[int, dict[str, Any]] = {}
         self._instrument_by_symbol: dict[str, dict[str, Any]] = {}
+        self._broadcaster: TickBroadcaster | None = None
+        self._broadcaster_lock = threading.Lock()
 
     def profile(self) -> dict[str, Any]:
         kite = self._get_kite()
@@ -250,6 +344,26 @@ class ZerodhaFrontendAPI:
             "order_id": order_id,
         }
 
+    # ── Auth helpers ─────────────────────────────────────────────────────────
+
+    def get_auth_status(self) -> dict[str, Any]:
+        auth = AuthManager(self.options.settings)
+        authenticated = auth.get_cached_access_token() is not None
+        return {"authenticated": authenticated}
+
+    def get_login_url(self) -> dict[str, Any]:
+        if KiteConnect is None:
+            raise RuntimeError("kiteconnect is not installed.")
+        kite = KiteConnect(api_key=self.options.settings.api_key)
+        return {"loginUrl": kite.login_url()}
+
+    def handle_oauth_callback(self, request_token: str) -> None:
+        """Exchange request_token for an access token and cache it."""
+        auth = AuthManager(self.options.settings)
+        auth.create_session(request_token)
+
+    # ─────────────────────────────────────────────────────────────────────────
+
     def save_watchlist(self, payload: Any) -> dict[str, Any]:
         target = self.options.settings.watchlist_path
         target.write_text(json.dumps(payload, indent=2))
@@ -260,6 +374,16 @@ class ZerodhaFrontendAPI:
         if not target.exists():
             return []
         return json.loads(target.read_text())
+
+    def get_broadcaster(self) -> TickBroadcaster:
+        with self._broadcaster_lock:
+            if self._broadcaster is None:
+                kite = self._get_kite()
+                self._broadcaster = TickBroadcaster(
+                    api_key=self.options.settings.api_key,
+                    access_token=kite.access_token,
+                )
+            return self._broadcaster
 
     def _get_kite(self) -> Any:
         if self._kite is not None:
@@ -342,9 +466,65 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
     class APIHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
+
+            # ── SSE live-tick stream — long-lived connection, handled separately ──
+            if parsed.path == "/api/ticks/stream":
+                params = parse_qs(parsed.query)
+                raw = params.get("tokens", [""])[0]
+                tokens = [int(t) for t in raw.split(",") if t.strip().isdigit()]
+                if not tokens:
+                    self._send_json({"error": "tokens parameter required"}, status=400)
+                    return
+                try:
+                    broadcaster = api.get_broadcaster()
+                except Exception as exc:
+                    self._send_json({"error": str(exc)}, status=500)
+                    return
+                client_id, tick_queue = broadcaster.connect_client(tokens)
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "keep-alive")
+                    self.send_header("Access-Control-Allow-Origin", FRONTEND_URL)
+                    self.send_header("X-Accel-Buffering", "no")
+                    self.end_headers()
+                    while True:
+                        try:
+                            tick = tick_queue.get(timeout=20)
+                            self.wfile.write(f"data: {json.dumps(tick)}\n\n".encode())
+                            self.wfile.flush()
+                        except queue.Empty:
+                            self.wfile.write(b": ping\n\n")
+                            self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError, OSError):
+                    pass
+                finally:
+                    broadcaster.disconnect_client(client_id)
+                return
+
             try:
                 if parsed.path == "/api/health":
                     self._send_json({"ok": True, "status": "healthy"})
+                    return
+                if parsed.path == "/api/auth/status":
+                    self._send_json(api.get_auth_status())
+                    return
+                if parsed.path == "/api/auth/login-url":
+                    self._send_json(api.get_login_url())
+                    return
+                if parsed.path == "/api/auth/callback":
+                    params = parse_qs(parsed.query)
+                    request_token = params.get("request_token", [""])[0].strip()
+                    if not request_token:
+                        self._send_redirect(f"{FRONTEND_URL}?auth=error")
+                        return
+                    try:
+                        api.handle_oauth_callback(request_token)
+                        self._send_redirect(f"{FRONTEND_URL}?auth=success")
+                    except Exception as exc:
+                        LOGGER.exception("OAuth callback failed")
+                        self._send_redirect(f"{FRONTEND_URL}?auth=error&reason={exc}")
                     return
                 if parsed.path == "/api/profile":
                     self._send_json(api.profile())
@@ -422,12 +602,23 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", FRONTEND_URL)
                 self.send_header("Content-Length", str(len(encoded)))
                 self.end_headers()
                 self.wfile.write(encoded)
             except Exception as exc:
                 if _is_client_disconnect(exc):
                     LOGGER.debug("Client disconnected before response completed")
+                    return
+                raise
+
+        def _send_redirect(self, url: str) -> None:
+            try:
+                self.send_response(302)
+                self.send_header("Location", url)
+                self.end_headers()
+            except Exception as exc:
+                if _is_client_disconnect(exc):
                     return
                 raise
 
