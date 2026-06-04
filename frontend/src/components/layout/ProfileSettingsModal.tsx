@@ -40,10 +40,11 @@ export function ProfileSettingsModal({ onClose }: Props) {
   const slSettings   = useTradingStore((s) => s.slSettings);
   const setSLSettings = useTradingStore((s) => s.setSLSettings);
 
-  const [buyTrig,  setBuyTrig]  = useState(String(slSettings.buyTriggerOffset));
-  const [buyPrice, setBuyPrice] = useState(String(slSettings.buyPriceOffset));
-  const [selTrig,  setSelTrig]  = useState(String(slSettings.sellTriggerOffset));
-  const [selPrice, setSelPrice] = useState(String(slSettings.sellPriceOffset));
+  const [defaultQty, setDefaultQty] = useState(String(slSettings.defaultQty));
+  const [buyTrig,    setBuyTrig]    = useState(String(slSettings.buyTriggerOffset));
+  const [buyPrice,   setBuyPrice]   = useState(String(slSettings.buyPriceOffset));
+  const [selTrig,    setSelTrig]    = useState(String(slSettings.sellTriggerOffset));
+  const [selPrice,   setSelPrice]   = useState(String(slSettings.sellPriceOffset));
 
   const ref = useRef<HTMLDivElement>(null);
 
@@ -63,6 +64,7 @@ export function ProfileSettingsModal({ onClose }: Props) {
 
   const handleSave = () => {
     setSLSettings({
+      defaultQty:        Math.max(1, Number(defaultQty) || 65),
       buyTriggerOffset:  Math.max(0, Number(buyTrig)  || 2),
       buyPriceOffset:    Math.max(0, Number(buyPrice) || 2.5),
       sellTriggerOffset: Math.max(0, Number(selTrig)  || 2),
@@ -90,6 +92,21 @@ export function ProfileSettingsModal({ onClose }: Props) {
         <div className="mt-0.5 text-[11px] text-[#9aa3af]">
           User ID: {profile?.userId ?? "—"}
         </div>
+      </div>
+
+      {/* Default Qty */}
+      <div className="border-b border-[#f0f2f5] px-4 py-3">
+        <div className="mb-1.5 text-[11px] font-semibold text-[#9aa3af]">DEFAULT QTY (SHARES)</div>
+        <input
+          type="number"
+          step="1"
+          min="1"
+          value={defaultQty}
+          onChange={(e) => setDefaultQty(e.target.value)}
+          className="h-8 w-full rounded-[2px] border border-[#d0d3d8] px-2 text-[13px] text-[#333] focus:outline-none"
+          onFocus={(e) => (e.currentTarget.style.borderColor = "#387ed1")}
+          onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d3d8")}
+        />
       </div>
 
       {/* SL offset settings */}

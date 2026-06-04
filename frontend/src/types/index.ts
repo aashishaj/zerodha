@@ -23,6 +23,8 @@ export interface IndicatorSettings {
 }
 
 export interface SLSettings {
+  /** Default order quantity (shares / lots) */
+  defaultQty: number;
   /** Points added above High for BUY SL trigger price */
   buyTriggerOffset: number;
   /** Points added above High for BUY SL limit price */

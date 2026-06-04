@@ -34,11 +34,16 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
       ? "NRML" : "CNC";
   }, [instrument]);
 
+  const slSettings = useTradingStore((s) => s.slSettings);
   const defaultQty = useMemo(() => {
-    if (!instrument) return 1;
+    if (!instrument) return slSettings.defaultQty;
     const seg = instrument.segment;
-    return seg === "NFO-OPT" || seg === "NFO-FUT" ? Math.max(1, instrument.lot_size) : 1;
-  }, [instrument]);
+    // For derivatives, use lot size if greater; for equities use profile default qty
+    if (seg === "NFO-OPT" || seg === "NFO-FUT") {
+      return Math.max(slSettings.defaultQty, instrument.lot_size);
+    }
+    return slSettings.defaultQty;
+  }, [instrument, slSettings]);
 
   const products = useMemo<ProductType[]>(() => {
     if (!instrument) return ["MIS", "CNC"];

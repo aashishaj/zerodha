@@ -175,11 +175,11 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   selectedLayout: (localStorage.getItem("chartLayout") as LayoutId | null) ?? "single",
   activePaneId: "primary",
   slSettings: ((): SLSettings => {
+    const defaults = { defaultQty: 65, buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
     try {
-      return JSON.parse(localStorage.getItem("slSettings") ?? "null") as SLSettings
-        ?? { buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
+      return JSON.parse(localStorage.getItem("slSettings") ?? "null") as SLSettings ?? defaults;
     } catch {
-      return { buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
+      return defaults;
     }
   })(),
   indicators: ((): IndicatorSettings => {
