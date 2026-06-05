@@ -166,7 +166,6 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
   const seriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addCandlestickSeries"]> | null>(null);
-  const volumeSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addHistogramSeries"]> | null>(null);
   const vwapSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
   const smmaSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
   const cleanedCandlesRef = useRef<Candle[]>([]);
@@ -303,22 +302,6 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     });
     seriesRef.current = candleSeries;
 
-    const volumeSeries = chart.addHistogramSeries({
-      priceFormat: {
-        type: "volume",
-      },
-      priceScaleId: "",
-      priceLineVisible: false,
-      lastValueVisible: false,
-    });
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: {
-        top: 0.78,
-        bottom: 0.03,
-      },
-    });
-    volumeSeriesRef.current = volumeSeries;
-
     const handleCrosshairMove = (param: any) => {
       const hoverCallback = hoverCallbackRef.current;
       if (!hoverCallback) return;
@@ -396,7 +379,6 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
       chart.unsubscribeClick(handleClick);
       seriesRef.current = null;
-      volumeSeriesRef.current = null;
       vwapSeriesRef.current = null;
       smmaSeriesRef.current = null;
       chartRef.current = null;
@@ -416,7 +398,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
   }, [normalized, indicators]);
 
   useEffect(() => {
-    if (!seriesRef.current || !volumeSeriesRef.current || !chartRef.current) return;
+    if (!seriesRef.current || !chartRef.current) return;
 
     const isNewView = viewKey !== lastFitViewKeyRef.current;
     const prev = prevDataLengthRef.current;
@@ -425,13 +407,11 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     if (isNewView || prev === 0 || curr < prev) {
       // Full reload: new instrument/timeframe, first load, or data shrunk (e.g. after reset)
       seriesRef.current.setData(normalized.chartData);
-      volumeSeriesRef.current.setData(normalized.volumeData);
     } else {
       // Incremental: use series.update() for the forming bar + any new bars.
       // Starting from prev-1 catches an in-progress candle whose OHLC changed since last tick.
       for (let i = Math.max(0, prev - 1); i < curr; i++) {
         seriesRef.current.update(normalized.chartData[i]);
-        volumeSeriesRef.current.update(normalized.volumeData[i]);
       }
     }
 
