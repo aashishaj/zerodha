@@ -355,8 +355,8 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     const vwapSeries = chart.addLineSeries({
       color: "#e67e22",
       lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
+      priceLineVisible: true,
+      lastValueVisible: true,
       crosshairMarkerVisible: false,
       title: "VWAP",
     });
@@ -365,8 +365,8 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     const smmaSeries = chart.addLineSeries({
       color: "#8e44ad",
       lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
+      priceLineVisible: true,
+      lastValueVisible: true,
       crosshairMarkerVisible: false,
       title: "SMMA",
     });
