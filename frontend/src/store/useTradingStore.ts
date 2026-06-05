@@ -5,6 +5,7 @@ import { marketDataService } from "../services/marketDataService";
 import { marketDepthService } from "../services/marketDepthService";
 import { watchlistService } from "../services/watchlistService";
 import { optionChainService } from "../services/optionChainService";
+import { orderService } from "../services/orderService";
 import { parseChartDate } from "../utils/dates";
 import type {
   Candle,
@@ -15,6 +16,7 @@ import type {
   MainTab,
   MarketDepth,
   OptionChainRow,
+  Order,
   OrderSide,
   OrderTicketPrefill,
   Quote,
@@ -69,6 +71,7 @@ interface TradingState {
   candles: CandleCache;
   profile: { userId: string; name: string } | null;
   optionChainRows: OptionChainRow[];
+  orders: Order[];
   selectedUnderlying: string;
   selectedExpiry: string;
   activeOrderTicketInstrument: Instrument | null;
@@ -107,6 +110,18 @@ interface TradingState {
   closeMarketDepth: () => void;
   setOptionChainFilters: (underlying: string, expiry: string) => Promise<void>;
   refreshOptionChain: () => Promise<void>;
+  placeOrder: (payload: {
+    side: "BUY" | "SELL";
+    exchange: string;
+    tradingsymbol: string;
+    product: string;
+    order_type: string;
+    validity: string;
+    quantity: number;
+    price?: number;
+    trigger_price?: number;
+  }) => Promise<{ order_id: string }>;
+  fetchOrders: () => Promise<void>;
 }
 
 const toWatchlistItem = (instrument: Instrument, quote?: Quote): WatchlistItem => ({
@@ -163,6 +178,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   candles: {},
   profile: null,
   optionChainRows: [],
+  orders: [],
   selectedUnderlying: "NIFTY",
   selectedExpiry: "",
   activeOrderTicketInstrument: null,
@@ -416,6 +432,24 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   },
   closeMarketDepth() {
     set({ isMarketDepthOpen: false, marketDepthInstrument: null, marketDepth: null });
+  },
+  async placeOrder(payload) {
+    const result = await orderService.placeOrder(payload);
+    if (result.ok) {
+      // Refresh orders after placing
+      await get().fetchOrders();
+    }
+    return { order_id: result.order_id };
+  },
+  async fetchOrders() {
+    try {
+      const result = await orderService.getOrders();
+      if (result.ok) {
+        set({ orders: result.orders });
+      }
+    } catch (err) {
+      console.error("Failed to fetch orders:", err);
+    }
   },
   setLayout(layout) {
     localStorage.setItem("chartLayout", layout);

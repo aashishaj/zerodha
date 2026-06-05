@@ -9,6 +9,8 @@ const navItems = ["Dashboard", "Orders", "Holdings", "Positions", "Bids", "Funds
 export function TopHeader() {
   const profile = useTradingStore((state) => state.profile);
   const quotes  = useTradingStore((state) => state.quotes);
+  const mainTab = useTradingStore((state) => state.mainTab);
+  const setMainTab = useTradingStore((state) => state.setMainTab);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const indices = ["NIFTY 50", "SENSEX"].filter((symbol) => quotes[symbol]);
 
@@ -30,16 +32,25 @@ export function TopHeader() {
         </div>
 
         <nav className="flex items-center gap-7">
-          {navItems.map((item) => (
-            <button
-              key={item}
-              className={`border-0 bg-transparent p-0 text-[13px] ${
-                item === "Dashboard" ? "font-medium text-[#222]" : "text-[#6b7280]"
-              }`}
-            >
-              {item}
-            </button>
-          ))}
+          {navItems.map((item) => {
+            const isActive =
+              (item === "Dashboard" && mainTab === "chart") ||
+              (item === "Orders" && mainTab === "orders");
+            return (
+              <button
+                key={item}
+                onClick={() => {
+                  if (item === "Dashboard") setMainTab("chart");
+                  else if (item === "Orders") setMainTab("orders");
+                }}
+                className={`border-0 bg-transparent p-0 text-[13px] ${
+                  isActive ? "font-medium text-[#222]" : "text-[#6b7280]"
+                }`}
+              >
+                {item}
+              </button>
+            );
+          })}
         </nav>
       </div>
 

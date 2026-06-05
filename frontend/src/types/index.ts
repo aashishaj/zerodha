@@ -14,7 +14,7 @@ export type Timeframe =
   | "1h"
   | "1d"
   | "1w";
-export type MainTab = "chart" | "option-chain" | "fundamentals";
+export type MainTab = "chart" | "option-chain" | "fundamentals" | "orders";
 export type LayoutId = "single" | "twoVertical" | "twoHorizontal";
 
 export interface IndicatorSettings {
@@ -120,6 +120,27 @@ export interface OrderTicketPayload {
   price?: number;
   trigger_price?: number;
   validity: OrderValidity;
+}
+
+export type OrderStatus = "PENDING" | "FILLED" | "REJECTED" | "CANCELLED";
+
+export interface Order {
+  order_id: string | number;
+  tradingsymbol: string;
+  exchange: string;
+  transaction_type: "BUY" | "SELL";
+  quantity: number;
+  price: number;
+  trigger_price?: number;
+  order_type: OrderType;
+  product: ProductType;
+  validity: OrderValidity;
+  status: OrderStatus;
+  filled_quantity?: number;
+  pending_quantity?: number;
+  average_price?: number;
+  placed_at?: string;
+  timestamp?: string;
 }
 
 export interface OptionChainRow {

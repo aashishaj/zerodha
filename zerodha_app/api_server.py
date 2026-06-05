@@ -344,6 +344,14 @@ class ZerodhaFrontendAPI:
             "order_id": order_id,
         }
 
+    def get_orders(self) -> dict[str, Any]:
+        kite = self._get_kite()
+        orders = kite.orders()
+        return {
+            "ok": True,
+            "orders": orders,
+        }
+
     # ── Auth helpers ─────────────────────────────────────────────────────────
 
     def get_auth_status(self) -> dict[str, Any]:
@@ -556,6 +564,9 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     params = parse_qs(parsed.query)
                     instrument_token = int(params.get("instrumentToken", ["0"])[0])
                     self._send_json(api.depth(instrument_token))
+                    return
+                if parsed.path == "/api/orders/list":
+                    self._send_json(api.get_orders())
                     return
                 if parsed.path == "/api/watchlist":
                     self._send_json(api.load_watchlist())

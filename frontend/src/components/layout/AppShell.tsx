@@ -4,6 +4,7 @@ import { useTradingStore } from "../../store/useTradingStore";
 import { OrderTicket } from "../watchlist/OrderTicket";
 import { MarketDepth } from "../watchlist/MarketDepth";
 import { WatchlistSidebar } from "../watchlist/WatchlistSidebar";
+import { OrdersPanel } from "../orders/OrdersPanel";
 
 export function AppShell() {
   const {
@@ -15,14 +16,23 @@ export function AppShell() {
     isMarketDepthOpen,
     closeMarketDepth,
     quotes,
+    mainTab,
   } = useTradingStore();
 
   return (
     <div className="h-screen overflow-hidden bg-white text-[#222]">
       <TopHeader />
       <div className="flex h-[calc(100vh-48px)]">
-        <WatchlistSidebar />
-        <ChartWorkspace />
+        {mainTab === "chart" ? (
+          <>
+            <WatchlistSidebar />
+            <ChartWorkspace />
+          </>
+        ) : mainTab === "orders" ? (
+          <div className="w-full">
+            <OrdersPanel />
+          </div>
+        ) : null}
       </div>
       <OrderTicket
         open={isOrderTicketOpen}

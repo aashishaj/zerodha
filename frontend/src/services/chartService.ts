@@ -23,7 +23,7 @@ const intervalMap: Record<Timeframe, string> = {
 };
 
 export const chartService = {
-  async getCandles(instrumentToken: number, timeframe: Timeframe): Promise<Candle[]> {
+  async getCandles(instrumentToken: number, timeframe: Timeframe, from?: string): Promise<Candle[]> {
     if (useMock) {
       return mockCandles[String(instrumentToken)]?.[timeframe] ?? [];
     }
@@ -33,6 +33,7 @@ export const chartService = {
     const response = await apiClient.get<Candle[]>(`/historical/${instrumentToken}`, {
       params: {
         interval: intervalMap[timeframe],
+        ...(from ? { from } : {}),
       },
     });
     return response.data;

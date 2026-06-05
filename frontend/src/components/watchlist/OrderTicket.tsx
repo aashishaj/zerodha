@@ -1,6 +1,5 @@
 import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ordersService } from "../../services/ordersService";
 import type { Instrument, OrderSide, OrderTicketPayload, OrderType, ProductType, Quote } from "../../types";
 import { useTradingStore } from "../../store/useTradingStore";
 
@@ -106,25 +105,29 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
 
   const theme = THEME[currentSide];
 
+  const placeOrder = useTradingStore((s) => s.placeOrder);
+
   const handleSubmit = async () => {
     if (!instrument) return;
     setSubmitting(true);
     setMessage(null);
     try {
-      const payload: OrderTicketPayload = {
+      const res = await placeOrder({
         side: currentSide,
-        instrument_token: instrument.instrument_token,
-        tradingsymbol: instrument.tradingsymbol,
         exchange: instrument.exchange,
+        tradingsymbol: instrument.tradingsymbol,
         product,
         order_type: orderType,
+        validity,
         quantity,
         price:         priceEnabled   && price        ? Number(price)        : undefined,
         trigger_price: triggerEnabled && triggerPrice ? Number(triggerPrice) : undefined,
-        validity,
-      };
-      const res = await ordersService.placeOrder(payload);
-      setMessage({ text: res.message, ok: true });
+      });
+      setMessage({ text: `Order submitted. Order ID: ${res.order_id}`, ok: true });
+      // Close the ticket after successful submission
+      setTimeout(() => {
+        useTradingStore.getState().closeOrderTicket();
+      }, 1000);
     } catch (err) {
       setMessage({ text: err instanceof Error ? err.message : "Order request failed.", ok: false });
     } finally {
