@@ -1,9 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { IndicatorSettings } from "../../types";
+import { useTradingStore } from "../../store/useTradingStore";
+import type { IndicatorInstance } from "../../types";
 
 interface IndicatorPopoverProps {
-  indicators: IndicatorSettings;
-  onChange: (settings: IndicatorSettings) => void;
   onClose: () => void;
 }
 
@@ -22,8 +21,12 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   );
 }
 
-export function IndicatorPopover({ indicators, onChange, onClose }: IndicatorPopoverProps) {
+export function IndicatorPopover({ onClose }: IndicatorPopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const indicatorInstances = useTradingStore((state) => state.indicatorInstances);
+  const addIndicator = useTradingStore((state) => state.addIndicator);
+  const toggleIndicator = useTradingStore((state) => state.toggleIndicator);
+  const updateIndicator = useTradingStore((state) => state.updateIndicator);
 
   useEffect(() => {
     const onPointer = (e: MouseEvent) => {
@@ -43,10 +46,21 @@ export function IndicatorPopover({ indicators, onChange, onClose }: IndicatorPop
     };
   }, [onClose]);
 
-  const setVwap = (enabled: boolean) => onChange({ ...indicators, vwap: enabled });
+  const vwap = indicatorInstances.find((ind) => ind.type === "VWAP");
+  const smma = indicatorInstances.find((ind) => ind.type === "SMMA");
 
-  const setSmma = (patch: Partial<typeof indicators.smma>) =>
-    onChange({ ...indicators, smma: { ...indicators.smma, ...patch } });
+  // Toggling adds the instance back if it was deleted, otherwise flips `enabled`
+  const toggleType = (type: IndicatorInstance["type"], existing?: IndicatorInstance) => {
+    if (existing) {
+      toggleIndicator(existing.id);
+      return;
+    }
+    if (type === "VWAP") {
+      addIndicator({ id: `vwap-${Date.now()}`, type: "VWAP", enabled: true, color: "#2196f3", lineWidth: 2, source: "hlc3" });
+    } else {
+      addIndicator({ id: `smma-${Date.now()}`, type: "SMMA", enabled: true, color: "#8e44ad", lineWidth: 2, length: 7, source: "close" });
+    }
+  };
 
   return (
     <div
@@ -64,7 +78,7 @@ export function IndicatorPopover({ indicators, onChange, onClose }: IndicatorPop
             <p className="text-[13px] font-medium text-[#222]">VWAP</p>
             <p className="text-[11px] text-[#9aa3af]">Volume Weighted Avg Price</p>
           </div>
-          <Toggle on={indicators.vwap} onToggle={() => setVwap(!indicators.vwap)} />
+          <Toggle on={!!vwap?.enabled} onToggle={() => toggleType("VWAP", vwap)} />
         </div>
       </div>
 
@@ -77,20 +91,20 @@ export function IndicatorPopover({ indicators, onChange, onClose }: IndicatorPop
             <p className="text-[13px] font-medium text-[#222]">SMMA</p>
             <p className="text-[11px] text-[#9aa3af]">Smoothed Moving Average</p>
           </div>
-          <Toggle on={indicators.smma.enabled} onToggle={() => setSmma({ enabled: !indicators.smma.enabled })} />
+          <Toggle on={!!smma?.enabled} onToggle={() => toggleType("SMMA", smma)} />
         </div>
 
-        {indicators.smma.enabled && (
+        {smma?.enabled && (
           <div className="mt-2.5 flex items-center gap-2">
             <label className="text-[12px] text-[#6b7280]">Period</label>
             <input
               type="number"
               min={2}
               max={500}
-              value={indicators.smma.period}
+              value={smma.length ?? 7}
               onChange={(e) => {
                 const v = parseInt(e.target.value, 10);
-                if (Number.isFinite(v) && v >= 2 && v <= 500) setSmma({ period: v });
+                if (Number.isFinite(v) && v >= 2 && v <= 500) updateIndicator(smma.id, { length: v });
               }}
               className="h-6 w-16 rounded border border-[#d1d5db] px-1.5 text-center text-[12px] text-[#222] focus:border-[#2f7df6] focus:outline-none"
             />

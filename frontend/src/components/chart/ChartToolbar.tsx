@@ -53,8 +53,7 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
   const setSearchTarget = useTradingStore((state) => state.setSearchTarget);
   const selectedLayout = useTradingStore((state) => state.selectedLayout);
   const setLayout = useTradingStore((state) => state.setLayout);
-  const indicators = useTradingStore((state) => state.indicators);
-  const setIndicators = useTradingStore((state) => state.setIndicators);
+  const indicatorInstances = useTradingStore((state) => state.indicatorInstances);
   const [timeframeMenuOpen, setTimeframeMenuOpen] = useState(false);
   const timeframeMenuRef = useRef<HTMLDivElement>(null);
   const [layoutOpen, setLayoutOpen] = useState(false);
@@ -134,7 +133,7 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
     };
   }, [indicatorsOpen]);
 
-  const anyIndicatorActive = indicators.vwap || indicators.smma.enabled;
+  const anyIndicatorActive = indicatorInstances.some((ind) => ind.enabled);
 
   return (
     <div className="flex h-11 items-center justify-between border-b border-[#e8edf3] bg-white px-6">
@@ -200,11 +199,7 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
             Indicators
           </button>
           {indicatorsOpen && (
-            <IndicatorPopover
-              indicators={indicators}
-              onChange={setIndicators}
-              onClose={() => setIndicatorsOpen(false)}
-            />
+            <IndicatorPopover onClose={() => setIndicatorsOpen(false)} />
           )}
         </div>
         <div ref={layoutMenuRef} className="relative">

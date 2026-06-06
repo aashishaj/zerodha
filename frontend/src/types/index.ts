@@ -22,6 +22,16 @@ export interface IndicatorSettings {
   smma: { enabled: boolean; period: number };
 }
 
+export interface IndicatorInstance {
+  id: string;
+  type: "VWAP" | "SMMA";
+  enabled: boolean;
+  color: string;
+  lineWidth: number;
+  length?: number;
+  source?: "close" | "open" | "high" | "low" | "hlc3" | "ohlc4";
+}
+
 export interface SLSettings {
   /** Default order quantity (shares / lots) */
   defaultQty: number;

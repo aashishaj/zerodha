@@ -1,0 +1,74 @@
+# Cursor Rules - Aashish Prakash's Projects
+
+## General Coding Standards
+
+### Python
+- Use type hints for function signatures
+- Follow PEP 8 style guide
+- Use descriptive variable and function names
+- Add docstrings to all functions and classes
+- Prefer list comprehensions over map/filter when readable
+- Use `pathlib` for file path operations
+- Handle exceptions explicitly; avoid bare `except` clauses
+
+### Code Organization
+- Keep functions focused and single-purpose
+- Limit function length to ~50 lines when possible
+- Group related functionality into classes or modules
+- Use meaningful file and directory names
+
+### Documentation
+- Comment complex logic and business rules
+- Keep comments up-to-date with code changes
+- Use inline comments sparingly; prefer self-documenting code
+- Maintain README files in project directories
+
+### Testing
+- Write unit tests for critical business logic
+- Use descriptive test names that explain the scenario
+- Follow Arrange-Act-Assert pattern in tests
+- Mock external dependencies in unit tests
+
+## Project-Specific Rules
+
+### D2k/ext-data-subscription
+- **Documentation Location**: `/Users/aashishprakash/Projects/D2k/documentation/ews-data-subscription/`
+- All documentation for ext-data-subscription must be created in the documentation folder, not in the project base folder
+
+### Dagster Projects
+- Use `uv` as package manager (never `pip` or `poetry`)
+- Each course is an independent Python project
+- Always `cd` into the course directory first
+- Run commands with `uv run` prefix: `uv run dg dev`, `uv run pytest`
+- The `completed/` directory is read-only reference material
+
+### Data Engineering
+- Use descriptive names for ETL pipelines and data assets
+- Document data sources, transformations, and destinations
+- Include data quality checks in pipelines
+- Log important processing steps and errors
+- Handle missing or invalid data gracefully
+
+## Version Control
+- Write clear, descriptive commit messages
+- Use conventional commits format when possible
+- Keep commits focused on single changes
+- Don't commit sensitive data (credentials, API keys)
+
+## Dependencies
+- Pin dependency versions in production
+- Document why specific versions are required
+- Keep dependencies updated regularly
+- Use virtual environments for all Python projects
+
+## Error Handling
+- Log errors with sufficient context for debugging
+- Use appropriate error types
+- Provide helpful error messages
+- Clean up resources in finally blocks or context managers
+
+## Performance
+- Profile before optimizing
+- Document performance-critical sections
+- Use appropriate data structures
+- Consider memory usage for large datasets

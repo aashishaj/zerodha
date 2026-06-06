@@ -9,6 +9,7 @@ import { orderService } from "../services/orderService";
 import { parseChartDate } from "../utils/dates";
 import type {
   Candle,
+  IndicatorInstance,
   IndicatorSettings,
   Instrument,
   LayoutId,
@@ -87,6 +88,11 @@ interface TradingState {
   setActivePaneId: (id: "primary" | "compare") => void;
   indicators: IndicatorSettings;
   setIndicators: (settings: IndicatorSettings) => void;
+  indicatorInstances: IndicatorInstance[];
+  addIndicator: (instance: IndicatorInstance) => void;
+  updateIndicator: (id: string, updates: Partial<IndicatorInstance>) => void;
+  deleteIndicator: (id: string) => void;
+  toggleIndicator: (id: string) => void;
   slSettings: SLSettings;
   setSLSettings: (settings: SLSettings) => void;
   init: () => Promise<void>;
@@ -203,6 +209,20 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       return JSON.parse(localStorage.getItem("chartIndicators") ?? "null") as IndicatorSettings ?? { vwap: false, smma: { enabled: false, period: 20 } };
     } catch {
       return { vwap: false, smma: { enabled: false, period: 20 } };
+    }
+  })(),
+  indicatorInstances: ((): IndicatorInstance[] => {
+    const defaults: IndicatorInstance[] = [
+      { id: "smma-1", type: "SMMA", enabled: true, color: "#8e44ad", lineWidth: 2, length: 7, source: "close" },
+      { id: "vwap-1", type: "VWAP", enabled: true, color: "#2196f3", lineWidth: 2, source: "hlc3" },
+    ];
+    try {
+      const stored = JSON.parse(localStorage.getItem("indicatorInstances") ?? "null") as IndicatorInstance[] | null;
+      if (!stored) return defaults;
+      // Backfill lineWidth for instances persisted before it existed
+      return stored.map((ind) => ({ ...ind, lineWidth: ind.lineWidth ?? 2 }));
+    } catch {
+      return defaults;
     }
   })(),
   async init() {
@@ -472,6 +492,30 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   setSLSettings(settings) {
     localStorage.setItem("slSettings", JSON.stringify(settings));
     set({ slSettings: settings });
+  },
+  addIndicator(instance) {
+    const updated = [...get().indicatorInstances, instance];
+    localStorage.setItem("indicatorInstances", JSON.stringify(updated));
+    set({ indicatorInstances: updated });
+  },
+  updateIndicator(id, updates) {
+    const updated = get().indicatorInstances.map(
+      (ind) => (ind.id === id ? { ...ind, ...updates } : ind)
+    );
+    localStorage.setItem("indicatorInstances", JSON.stringify(updated));
+    set({ indicatorInstances: updated });
+  },
+  deleteIndicator(id) {
+    const updated = get().indicatorInstances.filter((ind) => ind.id !== id);
+    localStorage.setItem("indicatorInstances", JSON.stringify(updated));
+    set({ indicatorInstances: updated });
+  },
+  toggleIndicator(id) {
+    const updated = get().indicatorInstances.map(
+      (ind) => (ind.id === id ? { ...ind, enabled: !ind.enabled } : ind)
+    );
+    localStorage.setItem("indicatorInstances", JSON.stringify(updated));
+    set({ indicatorInstances: updated });
   },
   async setOptionChainFilters(underlying, expiry) {
     set({ selectedUnderlying: underlying, selectedExpiry: expiry });

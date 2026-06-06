@@ -1,6 +1,6 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { ColorType, CrosshairMode, TickMarkType, createChart } from "lightweight-charts";
-import type { Candle, IndicatorSettings } from "../../types";
+import { ColorType, CrosshairMode, TickMarkType, createChart, type LineWidth } from "lightweight-charts";
+import type { Candle, IndicatorInstance } from "../../types";
 import { parseChartDate } from "../../utils/dates";
 
 // IST = UTC+5:30 = 19800 seconds ahead of UTC
@@ -43,12 +43,32 @@ interface CandleChartProps {
   candles: Candle[];
   lineColor?: string;
   viewKey?: string;
-  indicators?: IndicatorSettings;
+  indicatorInstances?: IndicatorInstance[];
   onHoverCandle?: (candle: Candle | null) => void;
   onClickCandle?: (candle: Candle, point: { x: number; y: number }) => void;
+  onIndicatorValues?: (values: Record<string, number | null>) => void;
 }
 
 type LinePoint = { time: never; value: number };
+
+type IndicatorSource = NonNullable<IndicatorInstance["source"]>;
+
+// Resolve the price input for an indicator from a candle (close, hlc3, ohlc4, ...)
+function sourceValue(candle: Candle, source: IndicatorSource): number {
+  const o = Number(candle.open);
+  const h = Number(candle.high);
+  const l = Number(candle.low);
+  const c = Number(candle.close);
+  switch (source) {
+    case "open": return o;
+    case "high": return h;
+    case "low": return l;
+    case "hlc3": return (h + l + c) / 3;
+    case "ohlc4": return (o + h + l + c) / 4;
+    case "close":
+    default: return c;
+  }
+}
 
 function computeVWAP(candles: Candle[]): LinePoint[] {
   const out: LinePoint[] = [];
@@ -73,7 +93,7 @@ function computeVWAP(candles: Candle[]): LinePoint[] {
   return out;
 }
 
-function computeSMMA(candles: Candle[], period: number): LinePoint[] {
+function computeSMMA(candles: Candle[], period: number, source: IndicatorSource = "close"): LinePoint[] {
   if (period < 2) return [];
   const out: LinePoint[] = [];
   let smma: number | null = null;
@@ -83,21 +103,27 @@ function computeSMMA(candles: Candle[], period: number): LinePoint[] {
   for (const c of candles) {
     const ts = toChartTimestamp(c.time);
     if (ts === null) continue;
-    const close = Number(c.close);
+    const price = sourceValue(c, source);
 
     if (smma === null) {
-      sum += close;
+      sum += price;
       count++;
       if (count === period) {
         smma = sum / period;
         out.push({ time: ts as never, value: smma });
       }
     } else {
-      smma = (smma * (period - 1) + close) / period;
+      smma = (smma * (period - 1) + price) / period;
       out.push({ time: ts as never, value: smma });
     }
   }
   return out;
+}
+
+// Compute the line data for a single indicator instance
+function computeIndicatorData(instance: IndicatorInstance, candles: Candle[]): LinePoint[] {
+  if (instance.type === "VWAP") return computeVWAP(candles);
+  return computeSMMA(candles, instance.length ?? 7, instance.source ?? "close");
 }
 
 function toChartTimestamp(value: string | null | undefined) {
@@ -160,17 +186,18 @@ function normalizeCandles(rawCandles: Candle[]): {
 }
 
 export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(function CandleChart(
-  { candles, lineColor = "#1976d2", viewKey, indicators, onHoverCandle, onClickCandle },
+  { candles, lineColor = "#1976d2", viewKey, indicatorInstances, onHoverCandle, onClickCandle, onIndicatorValues },
   forwardedRef,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
   const seriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addCandlestickSeries"]> | null>(null);
-  const vwapSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
-  const smmaSeriesRef = useRef<ReturnType<ReturnType<typeof createChart>["addLineSeries"]> | null>(null);
+  // One line series per indicator instance id — never stored in React state (avoids re-renders)
+  const indicatorSeriesRef = useRef<Record<string, ReturnType<ReturnType<typeof createChart>["addLineSeries"]>>>({});
   const cleanedCandlesRef = useRef<Candle[]>([]);
   const hoverCallbackRef = useRef(onHoverCandle);
   const clickCallbackRef = useRef(onClickCandle);
+  const indicatorValuesCallbackRef = useRef(onIndicatorValues);
   const lastFitViewKeyRef = useRef<string | undefined>(undefined);
   // Tracks how many bars were loaded at last render so we can diff
   const prevDataLengthRef = useRef(0);
@@ -183,7 +210,8 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     cleanedCandlesRef.current = normalized.cleaned;
     hoverCallbackRef.current = onHoverCandle;
     clickCallbackRef.current = onClickCandle;
-  }, [normalized.cleaned, onHoverCandle, onClickCandle]);
+    indicatorValuesCallbackRef.current = onIndicatorValues;
+  }, [normalized.cleaned, onHoverCandle, onClickCandle, onIndicatorValues]);
 
   const applyPriceScale = () => {
     chartRef.current?.priceScale("right").applyOptions({
@@ -352,26 +380,6 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       }
     };
 
-    const vwapSeries = chart.addLineSeries({
-      color: "#e67e22",
-      lineWidth: 1,
-      priceLineVisible: true,
-      lastValueVisible: true,
-      crosshairMarkerVisible: false,
-      title: "",
-    });
-    vwapSeriesRef.current = vwapSeries;
-
-    const smmaSeries = chart.addLineSeries({
-      color: "#8e44ad",
-      lineWidth: 1,
-      priceLineVisible: true,
-      lastValueVisible: true,
-      crosshairMarkerVisible: false,
-      title: "",
-    });
-    smmaSeriesRef.current = smmaSeries;
-
     chart.subscribeCrosshairMove(handleCrosshairMove);
     chart.subscribeClick(handleClick);
 
@@ -379,8 +387,8 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
       chart.unsubscribeClick(handleClick);
       seriesRef.current = null;
-      vwapSeriesRef.current = null;
-      smmaSeriesRef.current = null;
+      // Series belong to the chart being removed — drop refs, don't call removeSeries
+      indicatorSeriesRef.current = {};
       chartRef.current = null;
       lastFitViewKeyRef.current = undefined;
       prevDataLengthRef.current = 0;
@@ -389,13 +397,58 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     };
   }, [lineColor, normalized.chartData.length]);
 
+  // Sync indicator line series with the instance list.
+  // - create series for new instances, remove series for deleted ones
+  // - apply color / lineWidth / visibility via applyOptions (no chart recreation)
+  // - recompute + setData, then report latest values up for the legend
   useEffect(() => {
-    if (!vwapSeriesRef.current || !smmaSeriesRef.current) return;
-    vwapSeriesRef.current.setData(indicators?.vwap ? computeVWAP(normalized.cleaned) : []);
-    smmaSeriesRef.current.setData(
-      indicators?.smma.enabled ? computeSMMA(normalized.cleaned, indicators.smma.period) : [],
-    );
-  }, [normalized, indicators]);
+    const chart = chartRef.current;
+    if (!chart) return;
+    const refs = indicatorSeriesRef.current;
+    const values: Record<string, number | null> = {};
+    const present = new Set<string>();
+
+    for (const instance of indicatorInstances ?? []) {
+      present.add(instance.id);
+      const width = (instance.lineWidth ?? 2) as LineWidth;
+      let series = refs[instance.id];
+      if (!series) {
+        series = chart.addLineSeries({
+          color: instance.color,
+          lineWidth: width,
+          priceLineVisible: true,
+          lastValueVisible: true,
+          crosshairMarkerVisible: false,
+          title: "",
+          visible: instance.enabled,
+        });
+        refs[instance.id] = series;
+      } else {
+        series.applyOptions({
+          color: instance.color,
+          lineWidth: width,
+          visible: instance.enabled,
+        });
+      }
+      const data = computeIndicatorData(instance, normalized.cleaned);
+      series.setData(data);
+      values[instance.id] = data.length ? data[data.length - 1].value : null;
+    }
+
+    // Remove series whose instance was deleted
+    for (const id of Object.keys(refs)) {
+      if (!present.has(id)) {
+        try {
+          chart.removeSeries(refs[id]);
+        } catch {
+          // already removed — ignore
+        }
+        delete refs[id];
+      }
+    }
+
+    indicatorValuesCallbackRef.current?.(values);
+  }, [normalized, indicatorInstances]);
 
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;

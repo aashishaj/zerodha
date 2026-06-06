@@ -2,6 +2,7 @@ import { Ghost, RefreshCw, RotateCcw, X } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import type { Candle, Instrument, Quote, Timeframe } from "../../types";
 import { CandleChart, type CandleChartHandle } from "./CandleChart";
+import { IndicatorLegend } from "./IndicatorLegend";
 import { EmptyState } from "../common/EmptyState";
 import { formatExpiry, parseChartDate } from "../../utils/dates";
 import { formatChange, formatPercent, formatPrice, movementClass } from "../../utils/format";
@@ -62,8 +63,15 @@ export const ChartPane = memo(function ChartPane({
   const [activeDateRange, setActiveDateRange] = useState<DateRangeLabel>("1D");
   const openOrderTicket    = useTradingStore((state) => state.openOrderTicket);
   const isOrderTicketOpen  = useTradingStore((state) => state.isOrderTicketOpen);
-  const indicators         = useTradingStore((state) => state.indicators);
+  const indicatorInstances = useTradingStore((state) => state.indicatorInstances);
   const slSettings         = useTradingStore((state) => state.slSettings);
+
+  // Latest indicator values reported by the chart, keyed by instance id
+  const [indicatorValues, setIndicatorValues] = useState<Record<string, number | null>>({});
+  // Stable callback so CandleChart (memo'd) doesn't re-render when values change
+  const handleIndicatorValues = useCallback((values: Record<string, number | null>) => {
+    setIndicatorValues(values);
+  }, []);
 
   // Stable ref so handlePickSide (useCallback []) always reads current settings
   const slSettingsRef = useRef(slSettings);
@@ -323,23 +331,28 @@ export const ChartPane = memo(function ChartPane({
         </div>
       )}
 
-      {/* Chart canvas — fills all remaining space, overflow hidden prevents any bleed */}
-      <div className="min-h-0 flex-1 overflow-hidden">
+      {/* Chart canvas — fills all remaining space. `relative` so the indicator
+          legend can overlay the top-left of the chart, Zerodha-style. */}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {loading ? (
           <div className="flex h-full items-center justify-center">
             <Loader label="Loading chart..." />
           </div>
         ) : candles.length ? (
-          <CandleChart
-            key={`${instrument.instrument_token}:${timeframe}:${layoutKey ?? "default"}`}
-            ref={chartRef}
-            candles={candles}
-            lineColor="#ff5722"
-            viewKey={`${instrument.instrument_token}:${timeframe}:${layoutKey ?? "default"}`}
-            indicators={indicators}
-            onHoverCandle={handleHoverCandle}
-            onClickCandle={handleCandleClick}
-          />
+          <>
+            <CandleChart
+              key={`${instrument.instrument_token}:${timeframe}:${layoutKey ?? "default"}`}
+              ref={chartRef}
+              candles={candles}
+              lineColor="#ff5722"
+              viewKey={`${instrument.instrument_token}:${timeframe}:${layoutKey ?? "default"}`}
+              indicatorInstances={indicatorInstances}
+              onHoverCandle={handleHoverCandle}
+              onClickCandle={handleCandleClick}
+              onIndicatorValues={handleIndicatorValues}
+            />
+            <IndicatorLegend values={indicatorValues} />
+          </>
         ) : (
           <div className="flex h-full items-center justify-center">
             <EmptyState
