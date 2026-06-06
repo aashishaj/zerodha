@@ -358,7 +358,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       priceLineVisible: true,
       lastValueVisible: true,
       crosshairMarkerVisible: false,
-      title: "VWAP",
+      title: "",
     });
     vwapSeriesRef.current = vwapSeries;
 
@@ -368,7 +368,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       priceLineVisible: true,
       lastValueVisible: true,
       crosshairMarkerVisible: false,
-      title: "SMMA",
+      title: "",
     });
     smmaSeriesRef.current = smmaSeries;
 
