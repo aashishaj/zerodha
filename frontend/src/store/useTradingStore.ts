@@ -213,14 +213,30 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   })(),
   indicatorInstances: ((): IndicatorInstance[] => {
     const defaults: IndicatorInstance[] = [
-      { id: "smma-1", type: "SMMA", enabled: true, color: "#8e44ad", lineWidth: 2, length: 7, source: "close" },
-      { id: "vwap-1", type: "VWAP", enabled: true, color: "#2196f3", lineWidth: 2, source: "hlc3" },
+      {
+        id: "smma-1", type: "SMMA", enabled: true, color: "#8e44ad", lineWidth: 2,
+        lineStyle: "solid", showPriceLine: true, showLastValue: true,
+        length: 7, source: "close", showOnAllIntervals: true, intervals: [],
+      },
+      {
+        id: "vwap-1", type: "VWAP", enabled: true, color: "#2196f3", lineWidth: 2,
+        lineStyle: "solid", showPriceLine: true, showLastValue: true,
+        source: "hlc3", anchorPeriod: "Session", showOnAllIntervals: true, intervals: [],
+      },
     ];
     try {
       const stored = JSON.parse(localStorage.getItem("indicatorInstances") ?? "null") as IndicatorInstance[] | null;
       if (!stored) return defaults;
-      // Backfill lineWidth for instances persisted before it existed
-      return stored.map((ind) => ({ ...ind, lineWidth: ind.lineWidth ?? 2 }));
+      // Backfill fields for instances persisted before they existed
+      return stored.map((ind) => ({
+        lineStyle: "solid" as const,
+        showPriceLine: true,
+        showLastValue: true,
+        showOnAllIntervals: true,
+        intervals: [],
+        ...ind,
+        lineWidth: ind.lineWidth ?? 2,
+      }));
     } catch {
       return defaults;
     }

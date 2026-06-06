@@ -1,6 +1,6 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { ColorType, CrosshairMode, TickMarkType, createChart, type LineWidth } from "lightweight-charts";
-import type { Candle, IndicatorInstance } from "../../types";
+import { ColorType, CrosshairMode, LineStyle, TickMarkType, createChart, type LineWidth } from "lightweight-charts";
+import type { Candle, IndicatorInstance, IndicatorLineStyle, VwapAnchorPeriod } from "../../types";
 import { parseChartDate } from "../../utils/dates";
 
 // IST = UTC+5:30 = 19800 seconds ahead of UTC
@@ -63,6 +63,7 @@ function sourceValue(candle: Candle, source: IndicatorSource): number {
     case "open": return o;
     case "high": return h;
     case "low": return l;
+    case "hl2": return (h + l) / 2;
     case "hlc3": return (h + l + c) / 3;
     case "ohlc4": return (o + h + l + c) / 4;
     case "close":
@@ -70,11 +71,44 @@ function sourceValue(candle: Candle, source: IndicatorSource): number {
   }
 }
 
-function computeVWAP(candles: Candle[]): LinePoint[] {
+// Map a UI line style to the lightweight-charts LineStyle enum
+function toLineStyle(style: IndicatorLineStyle | undefined): LineStyle {
+  switch (style) {
+    case "dashed": return LineStyle.Dashed;
+    case "dotted": return LineStyle.Dotted;
+    case "solid":
+    default: return LineStyle.Solid;
+  }
+}
+
+// Bucket key used to reset the VWAP cumulative sums at the anchor boundary
+function anchorKey(d: Date, anchor: VwapAnchorPeriod): string {
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  switch (anchor) {
+    case "Week": {
+      // ISO-ish week bucket from the UTC (already IST-shifted) timestamp
+      const onejan = Date.UTC(y, 0, 1);
+      const week = Math.floor((d.getTime() - onejan) / (7 * 86400000));
+      return `${y}-W${week}`;
+    }
+    case "Month": return `${y}-${m}`;
+    case "Quarter": return `${y}-Q${Math.floor(m / 3)}`;
+    case "Year": return `${y}`;
+    case "Session":
+    default: return `${y}-${m}-${d.getUTCDate()}`;
+  }
+}
+
+function computeVWAP(
+  candles: Candle[],
+  source: IndicatorSource = "hlc3",
+  anchor: VwapAnchorPeriod = "Session",
+): LinePoint[] {
   const out: LinePoint[] = [];
   let cumTP = 0;
   let cumVol = 0;
-  let lastDay = "";
+  let lastBucket = "";
 
   for (const c of candles) {
     const ts = toChartTimestamp(c.time);
@@ -82,10 +116,10 @@ function computeVWAP(candles: Candle[]): LinePoint[] {
     const vol = Number(c.volume ?? 0);
     if (vol <= 0) continue;
 
-    const day = new Date(ts * 1000).toISOString().slice(0, 10);
-    if (day !== lastDay) { cumTP = 0; cumVol = 0; lastDay = day; }
+    const bucket = anchorKey(istDate(ts), anchor);
+    if (bucket !== lastBucket) { cumTP = 0; cumVol = 0; lastBucket = bucket; }
 
-    const tp = (Number(c.high) + Number(c.low) + Number(c.close)) / 3;
+    const tp = sourceValue(c, source);
     cumTP += tp * vol;
     cumVol += vol;
     out.push({ time: ts as never, value: cumTP / cumVol });
@@ -122,7 +156,9 @@ function computeSMMA(candles: Candle[], period: number, source: IndicatorSource 
 
 // Compute the line data for a single indicator instance
 function computeIndicatorData(instance: IndicatorInstance, candles: Candle[]): LinePoint[] {
-  if (instance.type === "VWAP") return computeVWAP(candles);
+  if (instance.type === "VWAP") {
+    return computeVWAP(candles, instance.source ?? "hlc3", instance.anchorPeriod ?? "Session");
+  }
   return computeSMMA(candles, instance.length ?? 7, instance.source ?? "close");
 }
 
@@ -411,13 +447,17 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     for (const instance of indicatorInstances ?? []) {
       present.add(instance.id);
       const width = (instance.lineWidth ?? 2) as LineWidth;
+      const lineStyle = toLineStyle(instance.lineStyle);
+      const priceLineVisible = instance.showPriceLine ?? true;
+      const lastValueVisible = instance.showLastValue ?? true;
       let series = refs[instance.id];
       if (!series) {
         series = chart.addLineSeries({
           color: instance.color,
           lineWidth: width,
-          priceLineVisible: true,
-          lastValueVisible: true,
+          lineStyle,
+          priceLineVisible,
+          lastValueVisible,
           crosshairMarkerVisible: false,
           title: "",
           visible: instance.enabled,
@@ -427,6 +467,9 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
         series.applyOptions({
           color: instance.color,
           lineWidth: width,
+          lineStyle,
+          priceLineVisible,
+          lastValueVisible,
           visible: instance.enabled,
         });
       }

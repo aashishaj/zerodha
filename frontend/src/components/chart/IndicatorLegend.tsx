@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useTradingStore } from "../../store/useTradingStore";
 import { IndicatorLegendRow } from "./IndicatorLegendRow";
-import { IndicatorSettingsPopover } from "./IndicatorSettingsPopover";
+import { IndicatorSettingsModal } from "./IndicatorSettingsModal";
 import type { IndicatorInstance } from "../../types";
 
 interface IndicatorLegendProps {
@@ -16,7 +16,7 @@ export function IndicatorLegend({ values }: IndicatorLegendProps) {
   const updateIndicator = useTradingStore((state) => state.updateIndicator);
 
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [settings, setSettings] = useState<{ indicator: IndicatorInstance; x: number; y: number } | null>(null);
+  const [settingsIndicator, setSettingsIndicator] = useState<IndicatorInstance | null>(null);
 
   // Clear the active row when clicking anywhere outside the legend
   useEffect(() => {
@@ -46,22 +46,18 @@ export function IndicatorLegend({ values }: IndicatorLegendProps) {
             onToggle={() => toggleIndicator(indicator.id)}
             onDelete={() => {
               deleteIndicator(indicator.id);
-              if (settings?.indicator.id === indicator.id) setSettings(null);
+              if (settingsIndicator?.id === indicator.id) setSettingsIndicator(null);
             }}
-            onSettings={(rect) =>
-              setSettings({ indicator, x: rect.left, y: rect.bottom + 6 })
-            }
+            onSettings={() => setSettingsIndicator(indicator)}
           />
         ))}
       </div>
 
-      {settings && (
-        <IndicatorSettingsPopover
-          indicator={settings.indicator}
-          x={settings.x}
-          y={settings.y}
-          onApply={(updates) => updateIndicator(settings.indicator.id, updates)}
-          onClose={() => setSettings(null)}
+      {settingsIndicator && (
+        <IndicatorSettingsModal
+          indicator={settingsIndicator}
+          onApply={(updates) => updateIndicator(settingsIndicator.id, updates)}
+          onClose={() => setSettingsIndicator(null)}
         />
       )}
     </>

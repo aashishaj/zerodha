@@ -22,14 +22,27 @@ export interface IndicatorSettings {
   smma: { enabled: boolean; period: number };
 }
 
+export type IndicatorSource = "open" | "high" | "low" | "close" | "hl2" | "hlc3" | "ohlc4";
+export type IndicatorLineStyle = "solid" | "dashed" | "dotted";
+export type VwapAnchorPeriod = "Session" | "Week" | "Month" | "Quarter" | "Year";
+
 export interface IndicatorInstance {
   id: string;
   type: "VWAP" | "SMMA";
   enabled: boolean;
   color: string;
   lineWidth: number;
+  // Style
+  lineStyle?: IndicatorLineStyle;
+  showPriceLine?: boolean;
+  showLastValue?: boolean;
+  // Inputs
   length?: number;
-  source?: "close" | "open" | "high" | "low" | "hlc3" | "ohlc4";
+  source?: IndicatorSource;
+  anchorPeriod?: VwapAnchorPeriod;
+  // Visibility (UI/config only — eye toggle remains the live control)
+  showOnAllIntervals?: boolean;
+  intervals?: string[];
 }
 
 export interface SLSettings {

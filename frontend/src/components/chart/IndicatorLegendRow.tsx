@@ -4,7 +4,7 @@ import type { IndicatorInstance } from "../../types";
 // Build the Zerodha-style label, e.g. "VWAP hlc3 Session" / "SMMA 7 close"
 export function indicatorLabel(indicator: IndicatorInstance): string {
   if (indicator.type === "VWAP") {
-    return `VWAP ${indicator.source ?? "hlc3"} Session`;
+    return `VWAP ${indicator.source ?? "hlc3"} ${indicator.anchorPeriod ?? "Session"}`;
   }
   return `SMMA ${indicator.length ?? 7} ${indicator.source ?? "close"}`;
 }
