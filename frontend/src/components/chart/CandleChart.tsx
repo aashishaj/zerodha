@@ -356,7 +356,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       color: "#e67e22",
       lineWidth: 1,
       priceLineVisible: true,
-      lastValueVisible: false,
+      lastValueVisible: true,
       crosshairMarkerVisible: false,
       title: "VWAP",
     });
@@ -366,7 +366,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       color: "#8e44ad",
       lineWidth: 1,
       priceLineVisible: true,
-      lastValueVisible: false,
+      lastValueVisible: true,
       crosshairMarkerVisible: false,
       title: "SMMA",
     });
