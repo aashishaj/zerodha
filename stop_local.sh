@@ -1,8 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 API_PORT="${API_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
+# Derive the auth callback bridge port from the redirect URL (default 8765).
+CALLBACK_PORT="8765"
+if [[ -n "${ZERODHA_LOGIN_CALLBACK_URL:-}" && "$ZERODHA_LOGIN_CALLBACK_URL" =~ :([0-9]+) ]]; then
+  CALLBACK_PORT="${BASH_REMATCH[1]}"
+fi
 
 stop_port_processes() {
   local port="$1"
@@ -42,5 +56,6 @@ stop_port_processes() {
 
 stop_port_processes "$API_PORT" "API"
 stop_port_processes "$FRONTEND_PORT" "frontend"
+stop_port_processes "$CALLBACK_PORT" "auth callback bridge"
 
 echo "Local services stopped."

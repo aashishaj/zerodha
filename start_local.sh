@@ -6,6 +6,7 @@ API_HOST="${API_HOST:-127.0.0.1}"
 API_PORT="${API_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 CALLBACK_URL_DEFAULT="http://127.0.0.1:8765/callback"
+FRONTEND_URL="http://127.0.0.1:${FRONTEND_PORT}"
 
 stop_port_processes() {
   local port="$1"
@@ -56,25 +57,15 @@ fi
 
 export ZERODHA_LOGIN_CALLBACK_URL="${ZERODHA_LOGIN_CALLBACK_URL:-$CALLBACK_URL_DEFAULT}"
 
+# Derive the auth callback bridge port from the redirect URL (default 8765).
+CALLBACK_PORT="8765"
+if [[ "$ZERODHA_LOGIN_CALLBACK_URL" =~ :([0-9]+) ]]; then
+  CALLBACK_PORT="${BASH_REMATCH[1]}"
+fi
+
 if [[ ! -d "$ROOT_DIR/frontend/node_modules" ]]; then
   echo "Frontend dependencies are missing. Run: cd frontend && npm install"
   exit 1
-fi
-
-# Check if today's access token is cached; if not, run login in the foreground first
-TOKEN_MISSING=$(cd "$ROOT_DIR" && python3 -c "
-from zerodha_app.config import load_settings
-from zerodha_app.auth import AuthManager
-s = load_settings()
-print('yes' if AuthManager(s).get_cached_access_token() is None else 'no')
-" 2>/dev/null || echo "yes")
-
-if [[ "$TOKEN_MISSING" == "yes" ]]; then
-  echo "No access token found for today. Starting Zerodha login..."
-  echo "Using callback URL: $ZERODHA_LOGIN_CALLBACK_URL"
-  (cd "$ROOT_DIR" && python3 run.py login)
-  echo "Login complete. Starting services..."
-  echo
 fi
 
 cleanup() {
@@ -85,6 +76,9 @@ cleanup() {
   if [[ -n "${FRONTEND_PID:-}" ]] && kill -0 "$FRONTEND_PID" 2>/dev/null; then
     kill "$FRONTEND_PID" 2>/dev/null || true
   fi
+  if [[ -n "${CALLBACK_PID:-}" ]] && kill -0 "$CALLBACK_PID" 2>/dev/null; then
+    kill "$CALLBACK_PID" 2>/dev/null || true
+  fi
   wait 2>/dev/null || true
   exit "$exit_code"
 }
@@ -93,6 +87,7 @@ trap cleanup INT TERM EXIT
 
 stop_port_processes "$API_PORT" "API"
 stop_port_processes "$FRONTEND_PORT" "frontend"
+stop_port_processes "$CALLBACK_PORT" "auth callback bridge"
 
 echo "Starting Zerodha API on http://$API_HOST:$API_PORT"
 echo "Using callback URL: $ZERODHA_LOGIN_CALLBACK_URL"
@@ -101,6 +96,13 @@ echo "Using callback URL: $ZERODHA_LOGIN_CALLBACK_URL"
   python run.py api --host "$API_HOST" --port "$API_PORT"
 ) &
 API_PID=$!
+
+echo "Starting auth callback bridge on port $CALLBACK_PORT"
+(
+  cd "$ROOT_DIR"
+  python run.py auth-server --frontend-url "$FRONTEND_URL"
+) &
+CALLBACK_PID=$!
 
 echo "Starting frontend on http://127.0.0.1:$FRONTEND_PORT"
 (
@@ -126,6 +128,7 @@ echo
 echo "Launcher ready."
 echo "- Frontend: http://127.0.0.1:$FRONTEND_PORT"
 echo "- API: http://$API_HOST:$API_PORT"
+echo "- Auth callback bridge: http://127.0.0.1:$CALLBACK_PORT"
 echo
 
 while true; do
@@ -136,6 +139,11 @@ while true; do
 
   if ! kill -0 "$FRONTEND_PID" 2>/dev/null; then
     wait "$FRONTEND_PID" 2>/dev/null || true
+    break
+  fi
+
+  if ! kill -0 "$CALLBACK_PID" 2>/dev/null; then
+    wait "$CALLBACK_PID" 2>/dev/null || true
     break
   fi
 

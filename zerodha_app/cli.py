@@ -164,6 +164,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Trigger the interactive login flow when no cached token exists",
     )
+
+    auth_server_parser = subparsers.add_parser(
+        "auth-server",
+        help="Run the persistent OAuth callback bridge on the Zerodha redirect URL",
+    )
+    auth_server_parser.add_argument(
+        "--frontend-url",
+        default="http://127.0.0.1:5173",
+        help="Frontend URL to redirect the browser to after login",
+    )
     return parser
 
 
@@ -290,6 +300,12 @@ def main(argv: list[str] | None = None) -> int:
                     exchange=args.exchange,
                 )
             )
+            return 0
+
+        if args.command == "auth-server":
+            from zerodha_app.callback_server import run_callback_bridge
+
+            run_callback_bridge(settings, frontend_url=args.frontend_url)
             return 0
 
         if args.command == "api":

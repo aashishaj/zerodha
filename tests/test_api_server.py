@@ -1,5 +1,7 @@
+import json
+import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from zerodha_app.api_server import (
@@ -108,6 +110,30 @@ class APIServerTests(unittest.TestCase):
         api = ZerodhaFrontendAPI(APIOptions(settings=settings))
         api._kite = FakeKiteAPI()
         return api
+
+    def test_get_kite_rebuilds_when_cached_token_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "tokens.json"
+            today = date.today().isoformat()
+            cache_path.write_text(json.dumps({today: "token-one"}))
+            settings = Settings(
+                api_key="key",
+                api_secret="secret",
+                token_cache_path=cache_path,
+                watchlist_path=Path(temp_dir) / "watchlist.json",
+            )
+            api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+
+            first = api._get_kite()
+            self.assertEqual(api._kite_access_token, "token-one")
+            # Unchanged token: the memoized client is reused.
+            self.assertIs(api._get_kite(), first)
+
+            # The separate callback bridge process writes a fresh token for today.
+            cache_path.write_text(json.dumps({today: "token-two"}))
+            second = api._get_kite()
+            self.assertIsNot(second, first)
+            self.assertEqual(api._kite_access_token, "token-two")
 
     def test_normalize_instrument_payload(self):
         payload = _normalize_instrument_payload(

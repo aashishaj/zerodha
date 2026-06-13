@@ -144,6 +144,7 @@ class ZerodhaFrontendAPI:
     def __init__(self, options: APIOptions) -> None:
         self.options = options
         self._kite: Any | None = None
+        self._kite_access_token: str | None = None
         self._instrument_catalog: InstrumentCatalog | None = None
         self._raw_instruments: list[dict[str, Any]] | None = None
         self._instrument_by_token: dict[int, dict[str, Any]] = {}
@@ -394,16 +395,26 @@ class ZerodhaFrontendAPI:
             return self._broadcaster
 
     def _get_kite(self) -> Any:
-        if self._kite is not None:
-            return self._kite
         if KiteConnect is None:
             raise RuntimeError("kiteconnect is not installed. Run `pip install -r requirements.txt`.")
 
         auth = AuthManager(self.options.settings)
-        access_token = auth.get_access_token(auto_login=self.options.login_if_needed)
+        # Re-read the cached token so a token written by the separate callback
+        # bridge process is picked up without restarting the API server. Keep
+        # the existing client unless a different token has since been cached.
+        cached = auth.get_cached_access_token()
+        if self._kite is not None and (cached is None or cached == self._kite_access_token):
+            return self._kite
+
+        access_token = cached if cached is not None else auth.get_access_token(
+            auto_login=self.options.login_if_needed
+        )
         kite = KiteConnect(api_key=self.options.settings.api_key)
         kite.set_access_token(access_token)
         self._kite = kite
+        self._kite_access_token = access_token
+        # Drop any broadcaster bound to the old token so it rebinds on next use.
+        self._broadcaster = None
         return kite
 
     def _ensure_instruments_loaded(self) -> None:
