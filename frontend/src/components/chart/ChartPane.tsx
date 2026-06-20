@@ -1,11 +1,11 @@
-import { Ghost, RefreshCw, RotateCcw, X } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { Ghost, Minus, Plus, RefreshCw, RotateCcw, X } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Candle, Instrument, Quote, Timeframe } from "../../types";
 import { CandleChart, type CandleChartHandle } from "./CandleChart";
 import { IndicatorLegend } from "./IndicatorLegend";
 import { EmptyState } from "../common/EmptyState";
 import { formatExpiry, parseChartDate } from "../../utils/dates";
-import { formatChange, formatPercent, formatPrice, movementClass } from "../../utils/format";
+import { formatChange, formatInstrumentLabel, formatPercent, formatPrice, movementClass } from "../../utils/format";
 import { Loader } from "../common/Loader";
 import { IconButton } from "../common/IconButton";
 import { useTradingStore } from "../../store/useTradingStore";
@@ -65,6 +65,24 @@ export const ChartPane = memo(function ChartPane({
   const isOrderTicketOpen  = useTradingStore((state) => state.isOrderTicketOpen);
   const indicatorInstances = useTradingStore((state) => state.indicatorInstances);
   const slSettings         = useTradingStore((state) => state.slSettings);
+  const orders             = useTradingStore((state) => state.orders);
+  const fetchOrders        = useTradingStore((state) => state.fetchOrders);
+
+  // Populate orders on mount so the SL button can derive prices from the most
+  // recent order even before the Orders tab has been opened this session.
+  useEffect(() => {
+    void fetchOrders();
+  }, [fetchOrders]);
+
+  // Most recent order placed for this pane's instrument. Drives the SL button.
+  const latestOrderForInstrument = useMemo(() => {
+    if (!instrument) return null;
+    const matching = orders.filter((o) => o.tradingsymbol === instrument.tradingsymbol);
+    if (!matching.length) return null;
+    const placedTime = (o: (typeof matching)[number]) =>
+      new Date(o.placed_at ?? o.timestamp ?? 0).getTime() || 0;
+    return matching.reduce((latest, o) => (placedTime(o) >= placedTime(latest) ? o : latest));
+  }, [orders, instrument]);
 
   // Latest indicator values reported by the chart, keyed by instance id
   const [indicatorValues, setIndicatorValues] = useState<Record<string, number | null>>({});
@@ -215,6 +233,31 @@ export const ChartPane = memo(function ChartPane({
     setSidePicker(null);
   };
 
+  // Opens a stop-loss order ticket derived from the most recent order placed for
+  // this instrument. The SL is the opposite side of that order and its prices are
+  // computed from the order price using the configurable offsets in slSettings:
+  //   last order SELL → SL BUY:  trigger = price + buyTriggerOffset, limit = price + buyPriceOffset
+  //   last order BUY  → SL SELL: trigger = price - sellTriggerOffset, limit = price - sellPriceOffset
+  const handleSLFromOrder = () => {
+    if (!instrument || !latestOrderForInstrument) return;
+    const order = latestOrderForInstrument;
+    const base = order.price || order.average_price || quote?.last_price || 0;
+    if (!base) return;
+
+    const { buyTriggerOffset, buyPriceOffset, sellTriggerOffset, sellPriceOffset } =
+      slSettingsRef.current;
+    const tickSize = instrument.tick_size || 0.05;
+    const round = (v: number) => Number((Math.round(v / tickSize) * tickSize).toFixed(2));
+
+    const slSide: "BUY" | "SELL" = order.transaction_type === "BUY" ? "SELL" : "BUY";
+    const triggerPrice =
+      slSide === "BUY" ? round(base + buyTriggerOffset) : round(base - sellTriggerOffset);
+    const price =
+      slSide === "BUY" ? round(base + buyPriceOffset) : round(base - sellPriceOffset);
+
+    openOrderTicket(instrument, slSide, { orderType: "SL", price, triggerPrice });
+  };
+
   const handleDateRangeClick = (label: DateRangeLabel, tf: Timeframe) => {
     setActiveDateRange(label);
     onTimeframeChange?.(tf);
@@ -260,7 +303,7 @@ export const ChartPane = memo(function ChartPane({
       <div className="flex-none border-b border-[#eef1f4] px-4 py-2.5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="truncate text-[14px] font-medium text-[#222]">{instrument.tradingsymbol}</div>
+            <div className="truncate text-[14px] font-medium text-[#222]">{formatInstrumentLabel(instrument)}</div>
             <div className="mt-0.5 truncate text-[11px] text-[#6b7280]">
               {instrument.name} · {instrument.segment}
               {instrument.expiry ? ` · ${formatExpiry(instrument.expiry)}` : ""}
@@ -269,6 +312,24 @@ export const ChartPane = memo(function ChartPane({
             </div>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              onClick={handleSLFromOrder}
+              disabled={!latestOrderForInstrument}
+              title={
+                latestOrderForInstrument
+                  ? `Place SL (${latestOrderForInstrument.transaction_type === "BUY" ? "SELL" : "BUY"}) from last ${latestOrderForInstrument.transaction_type} @ ${formatPrice(latestOrderForInstrument.price || latestOrderForInstrument.average_price)}`
+                  : "No order yet for this instrument"
+              }
+              className="mr-1 flex h-7 items-center rounded-[2px] border border-[#e5793b] px-2.5 text-[12px] font-semibold text-[#e5793b] transition hover:bg-[#fff3ed] disabled:cursor-not-allowed disabled:border-[#e5e7eb] disabled:text-[#c1c7d0] disabled:hover:bg-transparent"
+            >
+              SL
+            </button>
+            <IconButton title="Zoom in" onClick={() => chartRef.current?.zoomIn()}>
+              <Plus className="h-4 w-4" />
+            </IconButton>
+            <IconButton title="Zoom out" onClick={() => chartRef.current?.zoomOut()}>
+              <Minus className="h-4 w-4" />
+            </IconButton>
             <IconButton title="Reset chart zoom" onClick={() => chartRef.current?.resetView()}>
               <RotateCcw className="h-4 w-4" />
             </IconButton>
