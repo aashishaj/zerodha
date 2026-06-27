@@ -125,6 +125,40 @@ class AccountAssignmentsViewTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.api.assign_account(999, 1)
 
+    def test_edit_user_role_password_active_delete(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        self.api.update_user_role(uid, "seller")
+        self.assertEqual(self.api.user_store().get_user_by_id(uid)["role"], "seller")
+
+        self.api.reset_user_password(uid, "newpw")
+        self.assertIsNotNone(self.api.user_store().authenticate("b1", "newpw"))
+
+        self.api.set_user_active(uid, False)
+        self.assertIsNone(self.api.user_store().authenticate("b1", "newpw"))
+
+        self.api.delete_user(uid)
+        self.assertIsNone(self.api.user_store().get_user_by_id(uid))
+
+    def test_cannot_edit_super_admin(self):
+        admin = self.api.user_store().create_user("root", "pw", "super_admin")
+        with self.assertRaises(PermissionError):
+            self.api.update_user_role(admin, "buyer")
+        with self.assertRaises(PermissionError):
+            self.api.delete_user(admin)
+
+    def test_user_accounts_lists_assignments(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        acc = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(acc, uid)
+        self.assertEqual([a["zerodha_user_id"] for a in self.api.user_accounts(uid)], ["MKQ150"])
+
+    def test_delete_user_clears_assignments(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        acc = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(acc, uid)
+        self.api.delete_user(uid)
+        self.assertEqual(self.api.account_store().assigned_user_ids(acc), [])
+
 
 class SessionAccountTests(unittest.TestCase):
     def setUp(self):

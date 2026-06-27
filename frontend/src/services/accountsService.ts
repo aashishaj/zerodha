@@ -38,6 +38,28 @@ export const accountsService = {
     return resp.data.users as AppUser[];
   },
 
+  // ── Super-admin: edit an existing user ──
+  async userAccounts(userId: number): Promise<AccountSummary[]> {
+    const resp = await apiClient.get(`/app/users/${userId}/accounts`);
+    return resp.data.accounts as AccountSummary[];
+  },
+
+  async setUserRole(userId: number, role: AppRole): Promise<void> {
+    await apiClient.post(`/app/users/${userId}/role`, { role });
+  },
+
+  async resetPassword(userId: number, password: string): Promise<void> {
+    await apiClient.post(`/app/users/${userId}/password`, { password });
+  },
+
+  async setUserActive(userId: number, active: boolean): Promise<void> {
+    await apiClient.post(`/app/users/${userId}/active`, { active });
+  },
+
+  async deleteUser(userId: number): Promise<void> {
+    await apiClient.post(`/app/users/${userId}/delete`);
+  },
+
   async assign(accountId: number, userId: number): Promise<void> {
     await apiClient.post("/accounts/assign", { accountId, userId });
   },

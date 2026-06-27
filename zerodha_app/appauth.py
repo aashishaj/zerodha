@@ -173,6 +173,34 @@ class UserStore:
             )
         return cursor.rowcount > 0
 
+    def set_password_by_id(self, user_id: int, password: str) -> bool:
+        password_hash = hash_password(password)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id)
+            )
+        return cursor.rowcount > 0
+
+    def set_role(self, user_id: int, role: str) -> bool:
+        if role not in VALID_ROLES:
+            raise ValueError(f"Role must be one of {VALID_ROLES}, got {role!r}.")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE users SET role = ? WHERE id = ?", (role, user_id)
+            )
+        return cursor.rowcount > 0
+
+    def set_active(self, user_id: int, active: bool) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE users SET active = ? WHERE id = ?", (1 if active else 0, user_id)
+            )
+        return cursor.rowcount > 0
+
+    def delete_user(self, user_id: int) -> None:
+        with self._connect() as connection:
+            connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
     def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
         """Return the user dict on valid credentials for an active user, else None."""
         user = self.get_user_by_username(username)

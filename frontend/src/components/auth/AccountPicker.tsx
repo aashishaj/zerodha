@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { LogOut, Plus, ShieldCheck } from "lucide-react";
 import { useAuthStore } from "../../store/useAuthStore";
 import { accountsService } from "../../services/accountsService";
-import type { AppRole, AppUser } from "../../types";
+import type { AccountSummary, AppRole, AppUser } from "../../types";
 
 function initials(label: string): string {
   const parts = label.trim().split(/\s+/);
@@ -150,6 +150,7 @@ function AdminPanel() {
   const [accountId, setAccountId] = useState<number | "">("");
   const [userId, setUserId] = useState<number | "">("");
   const [assigned, setAssigned] = useState<AppUser[]>([]);
+  const [editUserId, setEditUserId] = useState<number | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const refreshUsers = () => {
@@ -158,6 +159,7 @@ function AdminPanel() {
   useEffect(refreshUsers, []);
 
   const assignable = users.filter((u) => u.role !== "super_admin");
+  const editUser = users.find((u) => u.id === editUserId) ?? null;
 
   const refreshAssigned = (id: number | "") => {
     if (id === "") {
@@ -283,20 +285,209 @@ function AdminPanel() {
 
       <div className="mt-6 border-t border-slate-100 pt-4">
         <h3 className="mb-2 text-sm font-semibold text-slate-800">Users ({users.length})</h3>
+        <p className="mb-2 text-[11px] text-slate-400">Click a buyer/seller to edit role, password, access, or remove them.</p>
         {users.length === 0 ? (
           <p className="text-xs text-slate-400">No users yet.</p>
         ) : (
           <ul className="grid gap-1.5 sm:grid-cols-2">
-            {users.map((u) => (
-              <li key={u.id} className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-1.5">
-                <span className="text-xs font-medium text-slate-700">{u.username}</span>
-                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500">
-                  {u.role}
-                </span>
-              </li>
-            ))}
+            {users.map((u) => {
+              const isAdmin = u.role === "super_admin";
+              const selected = u.id === editUserId;
+              return (
+                <li key={u.id}>
+                  <button
+                    disabled={isAdmin}
+                    onClick={() => setEditUserId(selected ? null : u.id)}
+                    className={`flex w-full items-center justify-between rounded-md px-3 py-1.5 text-left transition ${
+                      selected ? "bg-blue-50 ring-1 ring-blue-300" : "bg-slate-50 hover:bg-slate-100"
+                    } ${isAdmin ? "cursor-default opacity-70" : ""}`}
+                  >
+                    <span className="text-xs font-medium text-slate-700">
+                      {u.username}
+                      {u.active === false && <span className="ml-1 text-[10px] text-red-500">(disabled)</span>}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500">
+                      {u.role}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
+        {editUser && (
+          <UserEditor
+            user={editUser}
+            accounts={accounts}
+            onChanged={refreshUsers}
+            onDeleted={() => {
+              setEditUserId(null);
+              refreshUsers();
+            }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Super-admin: edit one existing buyer/seller (role, password, active, accounts, delete). */
+function UserEditor({
+  user,
+  accounts,
+  onChanged,
+  onDeleted,
+}: {
+  user: AppUser;
+  accounts: AccountSummary[];
+  onChanged: () => void;
+  onDeleted: () => void;
+}) {
+  const [role, setRole] = useState<AppRole>(user.role);
+  const [newPassword, setNewPassword] = useState("");
+  const [addAccountId, setAddAccountId] = useState<number | "">("");
+  const [userAccts, setUserAccts] = useState<AccountSummary[]>([]);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const refreshAccts = () => {
+    void accountsService.userAccounts(user.id).then(setUserAccts).catch(() => setUserAccts([]));
+  };
+  useEffect(() => {
+    setRole(user.role);
+    setNewPassword("");
+    refreshAccts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  const run = async (fn: () => Promise<unknown>, ok: string) => {
+    setMsg(null);
+    try {
+      await fn();
+      setMsg(ok);
+    } catch {
+      setMsg("Action failed.");
+    }
+  };
+
+  const field =
+    "h-9 w-full rounded-lg border border-slate-300 px-3 text-sm focus:border-blue-500 focus:outline-none";
+  const unassigned = accounts.filter((a) => !userAccts.some((x) => x.id === a.id));
+
+  return (
+    <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50/40 p-4">
+      <div className="mb-3 text-sm font-semibold text-slate-800">Edit {user.username}</div>
+      {msg && <div className="mb-3 rounded-md bg-white px-3 py-1.5 text-xs text-slate-600">{msg}</div>}
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label className="block text-[11px] font-medium text-slate-500">Role</label>
+          <div className="flex gap-2">
+            <select className={field} value={role} onChange={(e) => setRole(e.target.value as AppRole)}>
+              <option value="buyer">Buyer (buy only)</option>
+              <option value="seller">Seller (sell only)</option>
+            </select>
+            <button
+              onClick={() => void run(() => accountsService.setUserRole(user.id, role).then(onChanged), "Role updated.")}
+              className="h-9 shrink-0 rounded-lg bg-slate-800 px-3 text-sm font-semibold text-white hover:bg-slate-900"
+            >
+              Save
+            </button>
+          </div>
+
+          <label className="block pt-1 text-[11px] font-medium text-slate-500">Reset password</label>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              className={field}
+              placeholder="New password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+            />
+            <button
+              disabled={!newPassword}
+              onClick={() =>
+                void run(() => accountsService.resetPassword(user.id, newPassword), "Password reset.").then(() =>
+                  setNewPassword(""),
+                )
+              }
+              className="h-9 shrink-0 rounded-lg bg-slate-800 px-3 text-sm font-semibold text-white hover:bg-slate-900 disabled:opacity-50"
+            >
+              Set
+            </button>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() =>
+                void run(() => accountsService.setUserActive(user.id, user.active === false).then(onChanged), "Updated.")
+              }
+              className="h-9 flex-1 rounded-lg border border-slate-300 text-sm font-medium text-slate-700 hover:bg-white"
+            >
+              {user.active === false ? "Enable" : "Disable"}
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm(`Delete user "${user.username}"?`))
+                  void run(() => accountsService.deleteUser(user.id).then(onDeleted), "Deleted.");
+              }}
+              className="h-9 flex-1 rounded-lg border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-[11px] font-medium text-slate-500">Accounts</label>
+          <div className="mb-2 mt-1 flex flex-wrap gap-1.5">
+            {userAccts.length === 0 ? (
+              <span className="text-xs text-slate-400">No accounts.</span>
+            ) : (
+              userAccts.map((a) => (
+                <span
+                  key={a.id}
+                  className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-700"
+                >
+                  {a.label}
+                  <button
+                    title="Remove"
+                    onClick={() => void accountsService.unassign(a.id, user.id).then(refreshAccts)}
+                    className="text-slate-400 hover:text-red-500"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
+          <div className="flex gap-2">
+            <select
+              className={field}
+              value={addAccountId}
+              onChange={(e) => setAddAccountId(e.target.value ? Number(e.target.value) : "")}
+            >
+              <option value="">Add account…</option>
+              {unassigned.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label} ({a.zerodha_user_id})
+                </option>
+              ))}
+            </select>
+            <button
+              disabled={addAccountId === ""}
+              onClick={() => {
+                if (addAccountId !== "")
+                  void accountsService.assign(Number(addAccountId), user.id).then(() => {
+                    setAddAccountId("");
+                    refreshAccts();
+                  });
+              }}
+              className="h-9 shrink-0 rounded-lg bg-slate-800 px-4 text-sm font-semibold text-white hover:bg-slate-900 disabled:opacity-50"
+            >
+              Add
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

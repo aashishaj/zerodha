@@ -196,7 +196,10 @@ class ZerodhaFrontendAPI:
         self.user_store().delete_session(token)
 
     def list_app_users(self) -> list[dict[str, Any]]:
-        return [public_user(user) for user in self.user_store().list_users()]
+        return [
+            {"id": u["id"], "username": u["username"], "role": u["role"], "active": u["active"]}
+            for u in self.user_store().list_users()
+        ]
 
     def create_app_user(self, username: str, password: str, role: str) -> dict[str, Any]:
         user_id = self.user_store().create_user(username, password, role)
@@ -255,6 +258,50 @@ class ZerodhaFrontendAPI:
 
     def unassign_account(self, account_id: int, user_id: int) -> None:
         self.account_store().unassign(user_id, account_id)
+
+    # ── Editing existing users (super-admin targets are protected) ───────────
+
+    def _editable_user(self, user_id: int) -> dict[str, Any]:
+        user = self.user_store().get_user_by_id(user_id)
+        if user is None:
+            raise ValueError("User not found.")
+        if user["role"] == "super_admin":
+            raise PermissionError("Super-admin users cannot be edited here.")
+        return user
+
+    def update_user_role(self, user_id: int, role: str) -> None:
+        self._editable_user(user_id)
+        if role not in ("buyer", "seller"):
+            raise ValueError("Role must be 'buyer' or 'seller'.")
+        self.user_store().set_role(user_id, role)
+
+    def reset_user_password(self, user_id: int, password: str) -> None:
+        self._editable_user(user_id)
+        if not password:
+            raise ValueError("Password must not be empty.")
+        self.user_store().set_password_by_id(user_id, password)
+
+    def set_user_active(self, user_id: int, active: bool) -> None:
+        self._editable_user(user_id)
+        self.user_store().set_active(user_id, active)
+
+    def delete_user(self, user_id: int) -> None:
+        self._editable_user(user_id)
+        self.account_store().remove_user(user_id)
+        self.user_store().delete_user(user_id)
+
+    def user_accounts(self, user_id: int) -> list[dict[str, Any]]:
+        """Accounts assigned to a user, tagged with today's connection state."""
+        connected = AuthManager(self.options.settings).connected_account_user_ids()
+        return [
+            {
+                "id": account["id"],
+                "label": account["label"],
+                "zerodha_user_id": account["zerodha_user_id"],
+                "connected": account["zerodha_user_id"] in connected,
+            }
+            for account in self.account_store().list_accounts_for_user(user_id)
+        ]
 
     def profile(self) -> dict[str, Any]:
         kite = self._get_kite()
@@ -713,6 +760,15 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                         return
                     self._send_json({"ok": True, "users": api.account_assignments(int(account_id_text))})
                     return
+                if parsed.path.startswith("/api/app/users/") and parsed.path.endswith("/accounts"):
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    user_id_text = parsed.path.split("/")[4]
+                    if not user_id_text.isdigit():
+                        self.send_error(404, "Not found")
+                        return
+                    self._send_json({"ok": True, "accounts": api.user_accounts(int(user_id_text))})
+                    return
                 if parsed.path == "/api/auth/status":
                     self._send_json(api.get_auth_status())
                     return
@@ -840,6 +896,36 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                         return
                     body = self._read_json()
                     api.unassign_account(int(body.get("accountId") or 0), int(body.get("userId") or 0))
+                    self._send_json({"ok": True})
+                    return
+                if parsed.path.startswith("/api/app/users/"):
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    parts = parsed.path.split("/")
+                    if len(parts) != 6 or not parts[4].isdigit():
+                        self.send_error(404, "Not found")
+                        return
+                    target_id = int(parts[4])
+                    action = parts[5]
+                    body = self._read_json()
+                    try:
+                        if action == "role":
+                            api.update_user_role(target_id, str(body.get("role") or ""))
+                        elif action == "password":
+                            api.reset_user_password(target_id, str(body.get("password") or ""))
+                        elif action == "active":
+                            api.set_user_active(target_id, bool(body.get("active")))
+                        elif action == "delete":
+                            api.delete_user(target_id)
+                        else:
+                            self.send_error(404, "Not found")
+                            return
+                    except PermissionError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=403)
+                        return
+                    except ValueError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=400)
+                        return
                     self._send_json({"ok": True})
                     return
 

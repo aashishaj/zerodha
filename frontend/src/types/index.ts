@@ -201,6 +201,7 @@ export interface AppUser {
   id: number;
   username: string;
   role: AppRole;
+  active?: boolean;
 }
 
 export interface AccountSummary {
