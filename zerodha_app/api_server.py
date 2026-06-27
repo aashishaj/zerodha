@@ -237,6 +237,15 @@ class ZerodhaFrontendAPI:
         self.user_store().set_active_account(token, account_id)
         return account
 
+    def account_assignments(self, account_id: int) -> list[dict[str, Any]]:
+        """Public user records for everyone assigned to an account."""
+        assigned: list[dict[str, Any]] = []
+        for user_id in self.account_store().assigned_user_ids(account_id):
+            user = self.user_store().get_user_by_id(user_id)
+            if user is not None:
+                assigned.append(public_user(user))
+        return assigned
+
     def assign_account(self, account_id: int, user_id: int) -> None:
         if self.account_store().get_account(account_id) is None:
             raise ValueError("Account not found.")
@@ -694,6 +703,15 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     if not self._require_role(user, "super_admin"):
                         return
                     self._send_json({"ok": True, "users": api.list_app_users()})
+                    return
+                if parsed.path.startswith("/api/accounts/") and parsed.path.endswith("/users"):
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    account_id_text = parsed.path.split("/")[3]
+                    if not account_id_text.isdigit():
+                        self.send_error(404, "Not found")
+                        return
+                    self._send_json({"ok": True, "users": api.account_assignments(int(account_id_text))})
                     return
                 if parsed.path == "/api/auth/status":
                     self._send_json(api.get_auth_status())

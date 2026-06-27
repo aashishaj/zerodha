@@ -33,6 +33,11 @@ export const accountsService = {
     return resp.data.user as AppUser;
   },
 
+  async assignedUsers(accountId: number): Promise<AppUser[]> {
+    const resp = await apiClient.get(`/accounts/${accountId}/users`);
+    return resp.data.users as AppUser[];
+  },
+
   async assign(accountId: number, userId: number): Promise<void> {
     await apiClient.post("/accounts/assign", { accountId, userId });
   },

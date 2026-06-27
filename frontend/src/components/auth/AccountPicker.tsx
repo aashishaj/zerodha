@@ -149,6 +149,7 @@ function AdminPanel() {
   const [role, setRole] = useState<AppRole>("buyer");
   const [accountId, setAccountId] = useState<number | "">("");
   const [userId, setUserId] = useState<number | "">("");
+  const [assigned, setAssigned] = useState<AppUser[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
 
   const refreshUsers = () => {
@@ -157,6 +158,17 @@ function AdminPanel() {
   useEffect(refreshUsers, []);
 
   const assignable = users.filter((u) => u.role !== "super_admin");
+
+  const refreshAssigned = (id: number | "") => {
+    if (id === "") {
+      setAssigned([]);
+      return;
+    }
+    void accountsService.assignedUsers(Number(id)).then(setAssigned).catch(() => setAssigned([]));
+  };
+  useEffect(() => {
+    refreshAssigned(accountId);
+  }, [accountId]);
 
   const handleCreate = async () => {
     setMsg(null);
@@ -172,15 +184,25 @@ function AdminPanel() {
     }
   };
 
-  const handleAssign = async (unassign: boolean) => {
+  const handleAdd = async () => {
     setMsg(null);
     if (accountId === "" || userId === "") return;
     try {
-      if (unassign) await accountsService.unassign(Number(accountId), Number(userId));
-      else await accountsService.assign(Number(accountId), Number(userId));
-      setMsg(unassign ? "Unassigned." : "Assigned.");
+      await accountsService.assign(Number(accountId), Number(userId));
+      setUserId("");
+      refreshAssigned(accountId);
     } catch {
       setMsg("Assignment failed.");
+    }
+  };
+
+  const handleRemove = async (uid: number) => {
+    setMsg(null);
+    try {
+      await accountsService.unassign(Number(accountId), uid);
+      refreshAssigned(accountId);
+    } catch {
+      setMsg("Could not remove access.");
     }
   };
 
@@ -208,7 +230,7 @@ function AdminPanel() {
         </div>
 
         <div>
-          <h3 className="mb-3 text-sm font-semibold text-slate-800">Assign account access</h3>
+          <h3 className="mb-3 text-sm font-semibold text-slate-800">Account access</h3>
           <div className="space-y-2">
             <select className={field} value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
               <option value="">Select account…</option>
@@ -216,20 +238,45 @@ function AdminPanel() {
                 <option key={a.id} value={a.id}>{a.label} ({a.zerodha_user_id})</option>
               ))}
             </select>
-            <select className={field} value={userId} onChange={(e) => setUserId(e.target.value ? Number(e.target.value) : "")}>
-              <option value="">Select user…</option>
-              {assignable.map((u) => (
-                <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
-              ))}
-            </select>
-            <div className="flex gap-2">
-              <button onClick={() => void handleAssign(false)} className="h-9 flex-1 rounded-lg bg-slate-800 text-sm font-semibold text-white transition hover:bg-slate-900">
-                Assign
-              </button>
-              <button onClick={() => void handleAssign(true)} className="h-9 flex-1 rounded-lg border border-slate-300 text-sm font-medium text-slate-600 transition hover:bg-slate-50">
-                Unassign
-              </button>
-            </div>
+
+            {accountId !== "" && (
+              <>
+                <div className="rounded-lg border border-slate-200 px-3 py-2">
+                  <div className="mb-1 text-[11px] font-medium text-slate-500">Has access</div>
+                  {assigned.length === 0 ? (
+                    <p className="text-xs text-slate-400">No users assigned.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {assigned.map((u) => (
+                        <span key={u.id} className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
+                          {u.username} <span className="text-slate-400">· {u.role}</span>
+                          <button
+                            onClick={() => void handleRemove(u.id)}
+                            title="Remove access"
+                            className="ml-0.5 text-slate-400 hover:text-red-500"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <select className={field} value={userId} onChange={(e) => setUserId(e.target.value ? Number(e.target.value) : "")}>
+                    <option value="">Add user…</option>
+                    {assignable
+                      .filter((u) => !assigned.some((a) => a.id === u.id))
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
+                      ))}
+                  </select>
+                  <button onClick={() => void handleAdd()} className="h-9 shrink-0 rounded-lg bg-slate-800 px-4 text-sm font-semibold text-white transition hover:bg-slate-900">
+                    Add
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

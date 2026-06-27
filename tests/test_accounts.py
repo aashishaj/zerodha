@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from zerodha_app.accounts import AccountStore
+from zerodha_app.api_server import APIOptions, ZerodhaFrontendAPI
 from zerodha_app.appauth import UserStore
 from zerodha_app.auth import AuthManager
 from zerodha_app.config import Settings
@@ -90,6 +91,39 @@ class PerAccountTokenTests(unittest.TestCase):
         self.assertEqual(self.auth.get_cached_access_token(), "legacy-token")
         self.assertIsNone(self.auth.get_cached_access_token("MKQ150"))
         self.assertEqual(self.auth.connected_account_user_ids(), set())
+
+
+class AccountAssignmentsViewTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        settings = Settings(
+            api_key="k",
+            api_secret="s",
+            token_cache_path=Path(self._tmp.name) / "tokens.json",
+            watchlist_path=Path(self._tmp.name) / "watchlist.json",
+            app_db_path=Path(self._tmp.name) / "app.db",
+        )
+        self.api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_account_assignments_returns_public_users(self):
+        buyer = self.api.user_store().create_user("buyer1", "pw", "buyer")
+        self.api.user_store().create_user("seller1", "pw", "seller")
+        account_id = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(account_id, buyer)
+
+        assigned = self.api.account_assignments(account_id)
+        self.assertEqual([u["username"] for u in assigned], ["buyer1"])
+        self.assertNotIn("password_hash", assigned[0])
+
+    def test_assign_unknown_user_or_account_raises(self):
+        account_id = self.api.account_store().upsert_account("MKQ150", label="A")
+        with self.assertRaises(ValueError):
+            self.api.assign_account(account_id, 999)
+        with self.assertRaises(ValueError):
+            self.api.assign_account(999, 1)
 
 
 class SessionAccountTests(unittest.TestCase):
