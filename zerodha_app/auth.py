@@ -45,12 +45,32 @@ class AuthManager:
             "No cached access token found for today. Run `python run.py login` first."
         )
 
-    def get_cached_access_token(self, target_date: date | None = None) -> str | None:
+    def get_cached_access_token(
+        self,
+        account_user_id: str | None = None,
+        target_date: date | None = None,
+    ) -> str | None:
+        """Return today's cached token.
+
+        When ``account_user_id`` is given, look it up in the per-account store;
+        otherwise resolve a single global/legacy token (used by the CLI and the
+        single-account fallback).
+        """
         current_date = target_date or date.today()
-        return self._resolve_store_token(
-            self._read_token_store(self.settings.token_cache_path),
-            current_date,
-        )
+        store = self._load_store(self.settings.token_cache_path)
+        if account_user_id:
+            return store["by_account"].get(account_user_id, {}).get(current_date.isoformat())
+        return self._resolve_legacy_token(store["legacy"], current_date)
+
+    def connected_account_user_ids(self, target_date: date | None = None) -> set[str]:
+        """User ids that have a cached token for the given day."""
+        current_date = (target_date or date.today()).isoformat()
+        store = self._load_store(self.settings.token_cache_path)
+        return {
+            user_id
+            for user_id, by_date in store["by_account"].items()
+            if current_date in by_date
+        }
 
     def interactive_login(self) -> str:
         login_url = self.kite.login_url()
@@ -78,36 +98,69 @@ class AuthManager:
         return self.create_session(request_token)
 
     def create_session(self, request_token: str) -> str:
+        return self.create_session_detailed(request_token)[0]
+
+    def create_session_detailed(self, request_token: str) -> tuple[str, str, str]:
+        """Exchange a request token and cache the token per account.
+
+        Returns ``(access_token, user_id, user_name)`` so callers can associate
+        the freshly authorised Zerodha account with an app account record.
+        """
         session = self.kite.generate_session(
             request_token=request_token,
             api_secret=self.settings.api_secret,
         )
-        access_token = session["access_token"]
+        access_token = str(session["access_token"])
+        user_id = str(session.get("user_id") or "")
+        user_name = str(session.get("user_name") or "")
         self.kite.set_access_token(access_token)
-        self._write_token_store(access_token)
-        return access_token
+        self._write_token_store(access_token, user_id=user_id or None)
+        return access_token, user_id, user_name
 
-    def _read_token_store(self, path) -> dict[str, str]:
+    def _load_store(self, path) -> dict[str, dict]:
+        """Load the token cache, normalising legacy formats.
+
+        Canonical shape::
+
+            {"by_account": {"<user_id>": {"<date>": "<token>"}}, "legacy": {"<date>": "<token>"}}
+
+        Older caches are flat ``{date: token}`` dicts or a bare token string;
+        both are surfaced under ``legacy`` so existing single-account flows keep
+        working.
+        """
+        empty: dict[str, dict] = {"by_account": {}, "legacy": {}}
         if not path.exists():
-            return {}
+            return empty
 
         try:
             data = json.loads(path.read_text())
         except json.JSONDecodeError as exc:
             raise ValueError(f"Invalid token cache JSON in {path}: {exc.msg}") from exc
 
-        if isinstance(data, dict):
-            return {str(key): str(value) for key, value in data.items()}
-
         if isinstance(data, str):
-            return {date.today().isoformat(): data}
+            return {"by_account": {}, "legacy": {date.today().isoformat(): data}}
+        if isinstance(data, dict):
+            if "by_account" in data or "legacy" in data:
+                by_account = {
+                    str(uid): {str(d): str(t) for d, t in (by_date or {}).items()}
+                    for uid, by_date in (data.get("by_account") or {}).items()
+                }
+                legacy = {str(d): str(t) for d, t in (data.get("legacy") or {}).items()}
+                return {"by_account": by_account, "legacy": legacy}
+            # Flat legacy cache: {date: token}
+            return {"by_account": {}, "legacy": {str(k): str(v) for k, v in data.items()}}
 
         raise ValueError(f"Unsupported token cache format in {path}")
 
-    def _write_token_store(self, access_token: str) -> None:
+    def _write_token_store(self, access_token: str, *, user_id: str | None = None) -> None:
         ensure_runtime_dirs(self.settings)
-        store = self._read_token_store(self.settings.token_cache_path)
-        store[date.today().isoformat()] = access_token
+        store = self._load_store(self.settings.token_cache_path)
+        today = date.today().isoformat()
+        if user_id:
+            store["by_account"].setdefault(user_id, {})[today] = access_token
+        # Always update the legacy/global slot so single-account CLI flows and
+        # the fallback lookup keep resolving the most recently cached token.
+        store["legacy"][today] = access_token
         self.settings.token_cache_path.write_text(json.dumps(store, indent=2))
 
     def _capture_request_token_from_callback(self, timeout_seconds: int = 180) -> str | None:
@@ -170,12 +223,12 @@ class AuthManager:
             return False
 
     @staticmethod
-    def _resolve_store_token(store: dict[str, str], target_date: date) -> str | None:
+    def _resolve_legacy_token(legacy: dict[str, str], target_date: date) -> str | None:
         date_key = target_date.isoformat()
         legacy_key = f"apikey_{target_date}"
-        token = store.get(date_key) or store.get(legacy_key)
+        token = legacy.get(date_key) or legacy.get(legacy_key)
         if token:
             return token
-        if len(store) == 1:
-            return next(iter(store.values()))
+        if len(legacy) == 1:
+            return next(iter(legacy.values()))
         return None

@@ -5,6 +5,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from zerodha_app.accounts import AccountStore
 from zerodha_app.auth import AuthManager
 from zerodha_app.config import Settings
 
@@ -50,7 +51,12 @@ class CallbackBridge:
         self._session_creator = session_creator or self._default_session_creator
 
     def _default_session_creator(self, request_token: str) -> str:
-        return AuthManager(self.settings).create_session(request_token)
+        access_token, user_id, user_name = AuthManager(self.settings).create_session_detailed(
+            request_token
+        )
+        if user_id:
+            AccountStore(self.settings.app_db_path).upsert_account(user_id, label=user_name or user_id)
+        return access_token
 
     def resolve_redirect(self, request_token: str) -> str:
         """Exchange the token if present and return the frontend redirect URL."""

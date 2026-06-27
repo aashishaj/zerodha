@@ -194,3 +194,23 @@ export interface SearchQueryMeta {
 export interface Funds {
   availableCash: number;
 }
+
+export type AppRole = "super_admin" | "seller" | "buyer";
+
+export interface AppUser {
+  id: number;
+  username: string;
+  role: AppRole;
+}
+
+export interface AccountSummary {
+  id: number;
+  label: string;
+  zerodha_user_id: string;
+  connected: boolean;
+}
+
+export interface ActiveAccount {
+  id: number;
+  label: string;
+}

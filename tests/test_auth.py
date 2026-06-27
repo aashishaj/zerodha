@@ -37,7 +37,9 @@ class AuthManagerTests(unittest.TestCase):
             with patch("zerodha_app.auth.KiteConnect"):
                 manager = AuthManager(settings)
 
-            self.assertEqual(manager.get_cached_access_token(date(2026, 5, 8)), "abc123")
+            self.assertEqual(
+                manager.get_cached_access_token(target_date=date(2026, 5, 8)), "abc123"
+            )
 
     def test_rejects_invalid_token_cache_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

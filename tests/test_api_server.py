@@ -116,7 +116,7 @@ class APIServerTests(unittest.TestCase):
             watchlist_path=Path("watchlist.json"),
         )
         api = ZerodhaFrontendAPI(APIOptions(settings=settings))
-        api._kite = FakeKiteAPI()
+        api._kite_by_account[None] = (FakeKiteAPI(), "test-token")
         return api
 
     def test_get_kite_rebuilds_when_cached_token_changes(self):
@@ -133,7 +133,7 @@ class APIServerTests(unittest.TestCase):
             api = ZerodhaFrontendAPI(APIOptions(settings=settings))
 
             first = api._get_kite()
-            self.assertEqual(api._kite_access_token, "token-one")
+            self.assertEqual(api._kite_by_account[None][1], "token-one")
             # Unchanged token: the memoized client is reused.
             self.assertIs(api._get_kite(), first)
 
@@ -141,7 +141,7 @@ class APIServerTests(unittest.TestCase):
             cache_path.write_text(json.dumps({today: "token-two"}))
             second = api._get_kite()
             self.assertIsNot(second, first)
-            self.assertEqual(api._kite_access_token, "token-two")
+            self.assertEqual(api._kite_by_account[None][1], "token-two")
 
     def test_funds_returns_live_balance_as_available_cash(self):
         api = self._build_api()
@@ -154,7 +154,7 @@ class APIServerTests(unittest.TestCase):
             def margins(self, segment=None):
                 return {"equity": {"net": 500.0}}
 
-        api._kite = NoAvailableKite()
+        api._kite_by_account[None] = (NoAvailableKite(), "test-token")
         self.assertEqual(api.funds(), {"availableCash": 500.0})
 
     def test_normalize_instrument_payload(self):

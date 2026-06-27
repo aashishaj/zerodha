@@ -7,11 +7,14 @@ import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from zerodha_app.accounts import AccountStore
+from zerodha_app.appauth import UserStore, public_user
 from zerodha_app.auth import AuthManager
 from zerodha_app.config import Settings, load_watchlist
 from zerodha_app.dashboard import _history_window, _load_history_with_fallback
@@ -44,6 +47,7 @@ SUPPORTED_HISTORICAL_INTERVALS = {
 
 
 FRONTEND_URL = "http://127.0.0.1:5173"
+_SESSION_COOKIE_MAX_AGE = 12 * 60 * 60
 
 
 @dataclass(slots=True)
@@ -143,14 +147,105 @@ class TickBroadcaster:
 class ZerodhaFrontendAPI:
     def __init__(self, options: APIOptions) -> None:
         self.options = options
-        self._kite: Any | None = None
-        self._kite_access_token: str | None = None
+        # Kite clients and tick broadcasters are cached per account (keyed by the
+        # Zerodha user_id, or None for the legacy/global single-account token).
+        self._kite_by_account: dict[str | None, tuple[Any, str]] = {}
         self._instrument_catalog: InstrumentCatalog | None = None
         self._raw_instruments: list[dict[str, Any]] | None = None
         self._instrument_by_token: dict[int, dict[str, Any]] = {}
         self._instrument_by_symbol: dict[str, dict[str, Any]] = {}
-        self._broadcaster: TickBroadcaster | None = None
+        self._broadcaster_by_account: dict[str | None, TickBroadcaster] = {}
         self._broadcaster_lock = threading.Lock()
+        # The active account for the in-flight request (set per worker thread).
+        self._request_ctx = threading.local()
+        self._user_store: UserStore | None = None
+        self._account_store: AccountStore | None = None
+
+    def account_store(self) -> AccountStore:
+        if self._account_store is None:
+            self._account_store = AccountStore(self.options.settings.app_db_path)
+        return self._account_store
+
+    # ── Per-request active account ───────────────────────────────────────────
+
+    def set_request_account(self, account_user_id: str | None) -> None:
+        self._request_ctx.account_user_id = account_user_id
+
+    def _active_account_user_id(self) -> str | None:
+        return getattr(self._request_ctx, "account_user_id", None)
+
+    # ── App auth (users/sessions) ────────────────────────────────────────────
+
+    def user_store(self) -> UserStore:
+        if self._user_store is None:
+            self._user_store = UserStore(self.options.settings.app_db_path)
+        return self._user_store
+
+    def app_login(self, username: str, password: str) -> tuple[dict[str, Any], str]:
+        """Validate credentials and open a session. Returns (public_user, token)."""
+        user = self.user_store().authenticate(username, password)
+        if user is None:
+            raise PermissionError("Invalid username or password.")
+        token = self.user_store().create_session(user["id"])
+        return public_user(user), token
+
+    def app_user_for_token(self, token: str | None) -> dict[str, Any] | None:
+        return self.user_store().get_session_user(token)
+
+    def app_logout(self, token: str | None) -> None:
+        self.user_store().delete_session(token)
+
+    def list_app_users(self) -> list[dict[str, Any]]:
+        return [public_user(user) for user in self.user_store().list_users()]
+
+    def create_app_user(self, username: str, password: str, role: str) -> dict[str, Any]:
+        user_id = self.user_store().create_user(username, password, role)
+        return public_user(self.user_store().get_user_by_id(user_id))
+
+    # ── Accounts ─────────────────────────────────────────────────────────────
+
+    def accounts_for_user(self, user: dict[str, Any]) -> list[dict[str, Any]]:
+        """Accounts visible to a user, each tagged with today's connection state."""
+        store = self.account_store()
+        accounts = (
+            store.list_accounts()
+            if user["role"] == "super_admin"
+            else store.list_accounts_for_user(user["id"])
+        )
+        connected = AuthManager(self.options.settings).connected_account_user_ids()
+        return [
+            {
+                "id": account["id"],
+                "label": account["label"],
+                "zerodha_user_id": account["zerodha_user_id"],
+                "connected": account["zerodha_user_id"] in connected,
+            }
+            for account in accounts
+        ]
+
+    def select_account(self, token: str, user: dict[str, Any], account_id: int) -> dict[str, Any]:
+        """Set the session's active account after validating access + connection."""
+        store = self.account_store()
+        account = store.get_account(account_id)
+        if account is None:
+            raise ValueError("Account not found.")
+        if user["role"] != "super_admin" and not store.is_assigned(user["id"], account_id):
+            raise PermissionError("Account is not assigned to you.")
+        connected = AuthManager(self.options.settings).connected_account_user_ids()
+        if account["zerodha_user_id"] not in connected:
+            raise ValueError("Account is not connected. Ask an admin to connect it.")
+        self.user_store().set_active_account(token, account_id)
+        return account
+
+    def assign_account(self, account_id: int, user_id: int) -> None:
+        if self.account_store().get_account(account_id) is None:
+            raise ValueError("Account not found.")
+        if self.user_store().get_user_by_id(user_id) is None:
+            raise ValueError("User not found.")
+        self.account_store().assign(user_id, account_id)
+
+    def unassign_account(self, account_id: int, user_id: int) -> None:
+        self.account_store().unassign(user_id, account_id)
 
     def profile(self) -> dict[str, Any]:
         kite = self._get_kite()
@@ -382,9 +477,11 @@ class ZerodhaFrontendAPI:
         return {"loginUrl": kite.login_url()}
 
     def handle_oauth_callback(self, request_token: str) -> None:
-        """Exchange request_token for an access token and cache it."""
+        """Exchange request_token, cache the per-account token, and upsert the account."""
         auth = AuthManager(self.options.settings)
-        auth.create_session(request_token)
+        _, user_id, user_name = auth.create_session_detailed(request_token)
+        if user_id:
+            self.account_store().upsert_account(user_id, label=user_name or user_id)
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -400,36 +497,40 @@ class ZerodhaFrontendAPI:
         return json.loads(target.read_text())
 
     def get_broadcaster(self) -> TickBroadcaster:
+        account_user_id = self._active_account_user_id()
         with self._broadcaster_lock:
-            if self._broadcaster is None:
+            broadcaster = self._broadcaster_by_account.get(account_user_id)
+            if broadcaster is None:
                 kite = self._get_kite()
-                self._broadcaster = TickBroadcaster(
+                broadcaster = TickBroadcaster(
                     api_key=self.options.settings.api_key,
                     access_token=kite.access_token,
                 )
-            return self._broadcaster
+                self._broadcaster_by_account[account_user_id] = broadcaster
+            return broadcaster
 
     def _get_kite(self) -> Any:
         if KiteConnect is None:
             raise RuntimeError("kiteconnect is not installed. Run `pip install -r requirements.txt`.")
 
+        account_user_id = self._active_account_user_id()
         auth = AuthManager(self.options.settings)
         # Re-read the cached token so a token written by the separate callback
         # bridge process is picked up without restarting the API server. Keep
         # the existing client unless a different token has since been cached.
-        cached = auth.get_cached_access_token()
-        if self._kite is not None and (cached is None or cached == self._kite_access_token):
-            return self._kite
+        cached = auth.get_cached_access_token(account_user_id)
+        entry = self._kite_by_account.get(account_user_id)
+        if entry is not None and (cached is None or cached == entry[1]):
+            return entry[0]
 
         access_token = cached if cached is not None else auth.get_access_token(
             auto_login=self.options.login_if_needed
         )
         kite = KiteConnect(api_key=self.options.settings.api_key)
         kite.set_access_token(access_token)
-        self._kite = kite
-        self._kite_access_token = access_token
+        self._kite_by_account[account_user_id] = (kite, access_token)
         # Drop any broadcaster bound to the old token so it rebinds on next use.
-        self._broadcaster = None
+        self._broadcaster_by_account.pop(account_user_id, None)
         return kite
 
     def _ensure_instruments_loaded(self) -> None:
@@ -503,6 +604,13 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
 
             # ── SSE live-tick stream — long-lived connection, handled separately ──
             if parsed.path == "/api/ticks/stream":
+                token = self._get_cookie("sid")
+                if api.app_user_for_token(token) is None:
+                    self._send_json({"ok": False, "error": "authentication required"}, status=401)
+                    return
+                if self._apply_active_account(token) is None:
+                    self._send_json({"ok": False, "error": "no account selected", "code": "NO_ACCOUNT"}, status=409)
+                    return
                 params = parse_qs(parsed.query)
                 raw = params.get("tokens", [""])[0]
                 tokens = [int(t) for t in raw.split(",") if t.strip().isdigit()]
@@ -538,14 +646,9 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 return
 
             try:
+                # ── Open endpoints (no app session required) ──
                 if parsed.path == "/api/health":
                     self._send_json({"ok": True, "status": "healthy"})
-                    return
-                if parsed.path == "/api/auth/status":
-                    self._send_json(api.get_auth_status())
-                    return
-                if parsed.path == "/api/auth/login-url":
-                    self._send_json(api.get_login_url())
                     return
                 if parsed.path == "/api/auth/callback":
                     params = parse_qs(parsed.query)
@@ -560,6 +663,55 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                         LOGGER.exception("OAuth callback failed")
                         self._send_redirect(f"{FRONTEND_URL}?auth=error&reason={exc}")
                     return
+                if parsed.path == "/api/app/me":
+                    me_token = self._get_cookie("sid")
+                    current = api.app_user_for_token(me_token)
+                    if current is None:
+                        self._send_json({"ok": False, "error": "authentication required"}, status=401)
+                        return
+                    active_id = api.user_store().get_active_account_id(me_token)
+                    active = api.account_store().get_account(active_id) if active_id else None
+                    self._send_json(
+                        {
+                            "ok": True,
+                            "user": public_user(current),
+                            "activeAccount": {"id": active["id"], "label": active["label"]} if active else None,
+                        }
+                    )
+                    return
+
+                # ── All endpoints below require a valid app session ──
+                token = self._get_cookie("sid")
+                user = api.app_user_for_token(token)
+                if user is None:
+                    self._send_json({"ok": False, "error": "authentication required"}, status=401)
+                    return
+
+                if parsed.path == "/api/accounts":
+                    self._send_json({"ok": True, "accounts": api.accounts_for_user(user)})
+                    return
+                if parsed.path == "/api/app/users":
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    self._send_json({"ok": True, "users": api.list_app_users()})
+                    return
+                if parsed.path == "/api/auth/status":
+                    self._send_json(api.get_auth_status())
+                    return
+                if parsed.path == "/api/auth/login-url":
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    self._send_json(api.get_login_url())
+                    return
+
+                # ── Account-scoped data endpoints (an account must be selected) ──
+                if self._apply_active_account(token) is None:
+                    self._send_json(
+                        {"ok": False, "error": "no account selected", "code": "NO_ACCOUNT"},
+                        status=409,
+                    )
+                    return
+
                 if parsed.path == "/api/profile":
                     self._send_json(api.profile())
                     return
@@ -612,6 +764,75 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
             try:
+                if parsed.path == "/api/app/login":
+                    body = self._read_json()
+                    username = str(body.get("username") or "").strip()
+                    password = str(body.get("password") or "")
+                    try:
+                        user, token = api.app_login(username, password)
+                    except PermissionError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=401)
+                        return
+                    self._send_json(
+                        {"ok": True, "user": user},
+                        set_cookie=("sid", token, _SESSION_COOKIE_MAX_AGE),
+                    )
+                    return
+                if parsed.path == "/api/app/logout":
+                    api.app_logout(self._get_cookie("sid"))
+                    self._send_json({"ok": True}, set_cookie=("sid", "", 0))
+                    return
+
+                # ── All endpoints below require a valid app session ──
+                token = self._get_cookie("sid")
+                user = api.app_user_for_token(token)
+                if user is None:
+                    self._send_json({"ok": False, "error": "authentication required"}, status=401)
+                    return
+
+                if parsed.path == "/api/session/select-account":
+                    body = self._read_json()
+                    try:
+                        account = api.select_account(token, user, int(body.get("accountId") or 0))
+                    except PermissionError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=403)
+                        return
+                    self._send_json({"ok": True, "account": {"id": account["id"], "label": account["label"]}})
+                    return
+                if parsed.path == "/api/app/users":
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    body = self._read_json()
+                    created = api.create_app_user(
+                        str(body.get("username") or ""),
+                        str(body.get("password") or ""),
+                        str(body.get("role") or ""),
+                    )
+                    self._send_json({"ok": True, "user": created})
+                    return
+                if parsed.path == "/api/accounts/assign":
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    body = self._read_json()
+                    api.assign_account(int(body.get("accountId") or 0), int(body.get("userId") or 0))
+                    self._send_json({"ok": True})
+                    return
+                if parsed.path == "/api/accounts/unassign":
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    body = self._read_json()
+                    api.unassign_account(int(body.get("accountId") or 0), int(body.get("userId") or 0))
+                    self._send_json({"ok": True})
+                    return
+
+                # ── Account-scoped data endpoints (an account must be selected) ──
+                if self._apply_active_account(token) is None:
+                    self._send_json(
+                        {"ok": False, "error": "no account selected", "code": "NO_ACCOUNT"},
+                        status=409,
+                    )
+                    return
+
                 if parsed.path == "/api/watchlist":
                     self._send_json(api.save_watchlist(self._read_json()))
                     return
@@ -636,13 +857,53 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 return {}
             return json.loads(self.rfile.read(length).decode("utf-8"))
 
-        def _send_json(self, payload: Any, *, status: int = 200) -> None:
+        def _get_cookie(self, name: str) -> str | None:
+            raw = self.headers.get("Cookie")
+            if not raw:
+                return None
+            jar: SimpleCookie = SimpleCookie()
+            try:
+                jar.load(raw)
+            except Exception:
+                return None
+            morsel = jar.get(name)
+            return morsel.value if morsel else None
+
+        def _current_user(self) -> dict[str, Any] | None:
+            return api.app_user_for_token(self._get_cookie("sid"))
+
+        def _require_role(self, user: dict[str, Any], role: str) -> bool:
+            if user.get("role") != role:
+                self._send_json({"ok": False, "error": "forbidden"}, status=403)
+                return False
+            return True
+
+        def _apply_active_account(self, token: str | None) -> dict[str, Any] | None:
+            """Resolve the session's active account and bind it to this request."""
+            active_id = api.user_store().get_active_account_id(token)
+            account = api.account_store().get_account(active_id) if active_id else None
+            api.set_request_account(account["zerodha_user_id"] if account else None)
+            return account
+
+        def _send_json(
+            self,
+            payload: Any,
+            *,
+            status: int = 200,
+            set_cookie: tuple[str, str, int] | None = None,
+        ) -> None:
             encoded = json.dumps(payload).encode("utf-8")
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Cache-Control", "no-store")
                 self.send_header("Access-Control-Allow-Origin", FRONTEND_URL)
+                if set_cookie is not None:
+                    name, value, max_age = set_cookie
+                    self.send_header(
+                        "Set-Cookie",
+                        f"{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}",
+                    )
                 self.send_header("Content-Length", str(len(encoded)))
                 self.end_headers()
                 self.wfile.write(encoded)

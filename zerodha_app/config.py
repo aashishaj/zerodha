@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_TOKEN_CACHE = ROOT_DIR / ".zerodha" / "access_tokens.json"
 DEFAULT_WATCHLIST = ROOT_DIR / "watchlist.json"
+DEFAULT_APP_DB = ROOT_DIR / ".zerodha" / "app.db"
 
 
 @dataclass(slots=True)
@@ -17,8 +18,18 @@ class Settings:
     api_secret: str
     token_cache_path: Path
     watchlist_path: Path
+    app_db_path: Path = DEFAULT_APP_DB
     login_callback_url: str | None = None
     log_level: str = "INFO"
+
+
+def resolve_app_db_path() -> Path:
+    """Resolve the app-auth SQLite path without requiring Zerodha credentials.
+
+    Used by the ``create-admin`` CLI command, which must run before any Kite
+    credentials are configured.
+    """
+    return Path(os.getenv("ZERODHA_APP_DB", str(DEFAULT_APP_DB)))
 
 
 def load_settings(
@@ -50,6 +61,7 @@ def load_settings(
         api_secret=api_secret,
         token_cache_path=resolved_cache,
         watchlist_path=resolved_watchlist,
+        app_db_path=resolve_app_db_path(),
         login_callback_url=resolved_login_callback_url,
         log_level=resolved_log_level,
     )

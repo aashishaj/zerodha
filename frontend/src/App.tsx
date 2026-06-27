@@ -2,26 +2,50 @@ import { useEffect, useState } from "react";
 import { AppShell } from "./components/layout/AppShell";
 import { Loader } from "./components/common/Loader";
 import { ErrorBoundary } from "./components/common/ErrorBoundary";
-import { LoginPage } from "./components/auth/LoginPage";
+import { AppLogin } from "./components/auth/AppLogin";
+import { AccountPicker } from "./components/auth/AccountPicker";
 import { useTradingStore } from "./store/useTradingStore";
+import { useAuthStore } from "./store/useAuthStore";
 
 export default function App() {
   const init = useTradingStore((state) => state.init);
   const isReady = useTradingStore((state) => state.isReady);
+  const appUser = useAuthStore((state) => state.user);
+  const appChecked = useAuthStore((state) => state.checked);
+  const activeAccount = useAuthStore((state) => state.activeAccount);
+  const checkSession = useAuthStore((state) => state.checkSession);
   const [initError, setInitError] = useState<string | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // Resolve the app session (our username/password layer) on first load.
+  useEffect(() => {
+    void checkSession();
+  }, [checkSession]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!appUser || !activeAccount) return;
     void init().catch((error: unknown) => {
       console.error("Dashboard init failed:", error);
       setInitError(error instanceof Error ? error.message : "Unknown initialization error");
     });
-  }, [init, isAuthenticated]);
+  }, [init, appUser, activeAccount]);
 
-  // Show login page until authenticated
-  if (!isAuthenticated) {
-    return <LoginPage onLoginSuccess={() => setIsAuthenticated(true)} />;
+  // Wait for the session check before deciding which gate to show.
+  if (!appChecked) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <Loader label="Checking session..." />
+      </div>
+    );
+  }
+
+  // Gate 1: our app login (username/password).
+  if (!appUser) {
+    return <AppLogin />;
+  }
+
+  // Gate 2: pick a connected Zerodha account (super admin connects them).
+  if (!activeAccount) {
+    return <AccountPicker />;
   }
 
   if (initError) {

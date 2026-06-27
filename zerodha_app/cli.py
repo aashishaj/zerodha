@@ -174,6 +174,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="http://127.0.0.1:5173",
         help="Frontend URL to redirect the browser to after login",
     )
+
+    admin_parser = subparsers.add_parser(
+        "create-admin",
+        help="Create the initial super-admin app user (username/password login)",
+    )
+    admin_parser.add_argument("--username", help="Super-admin username (prompted if omitted)")
+    admin_parser.add_argument("--password", help="Super-admin password (prompted if omitted)")
     return parser
 
 
@@ -186,6 +193,23 @@ def main(argv: list[str] | None = None) -> int:
         args.login_if_needed = True
 
     try:
+        if args.command == "create-admin":
+            import getpass
+
+            from zerodha_app.appauth import UserStore
+            from zerodha_app.config import resolve_app_db_path
+
+            username = (args.username or input("Super-admin username: ")).strip()
+            password = args.password or getpass.getpass("Super-admin password: ")
+            store = UserStore(resolve_app_db_path())
+            if store.get_user_by_username(username) is not None:
+                store.set_password(username, password)
+                print(f"Updated password for existing super-admin '{username}'.")
+            else:
+                user_id = store.create_user(username, password, "super_admin")
+                print(f"Created super-admin '{username}' (id={user_id}).")
+            return 0
+
         if args.command == "candles-demo":
             payload = simulate_candles(
                 symbol=args.symbol,

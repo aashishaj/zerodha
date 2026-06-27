@@ -1,7 +1,8 @@
-import { Bell, ShoppingCart, UserCircle2 } from "lucide-react";
+import { Bell, LogOut, ShoppingCart, UserCircle2 } from "lucide-react";
 import { useState } from "react";
 import { formatChange, formatPercent, formatPrice, movementClass } from "../../utils/format";
 import { useTradingStore } from "../../store/useTradingStore";
+import { useAuthStore } from "../../store/useAuthStore";
 import { ProfileSettingsModal } from "./ProfileSettingsModal";
 
 const navItems = ["Dashboard", "Orders", "Holdings", "Positions", "Bids", "Funds"];
@@ -11,6 +12,10 @@ export function TopHeader() {
   const quotes  = useTradingStore((state) => state.quotes);
   const mainTab = useTradingStore((state) => state.mainTab);
   const setMainTab = useTradingStore((state) => state.setMainTab);
+  const appUser = useAuthStore((state) => state.user);
+  const logout = useAuthStore((state) => state.logout);
+  const activeAccount = useAuthStore((state) => state.activeAccount);
+  const clearActiveAccount = useAuthStore((state) => state.clearActiveAccount);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const indices = ["NIFTY 50", "SENSEX"].filter((symbol) => quotes[symbol]);
 
@@ -55,6 +60,16 @@ export function TopHeader() {
       </div>
 
       <div className="flex items-center gap-2">
+        {activeAccount && (
+          <button
+            onClick={clearActiveAccount}
+            title="Switch account"
+            className="mr-1 flex items-center gap-1.5 rounded-sm border border-[#e0e0e0] px-2 py-1 text-[12px] text-[#444] transition hover:bg-[#f7f8fa]"
+          >
+            <span className="font-medium">{activeAccount.label}</span>
+            <span className="text-[10px] text-[#9aa3af]">Switch</span>
+          </button>
+        )}
         <button className="flex h-8 w-8 items-center justify-center rounded-sm border border-transparent text-[#7b8594] transition hover:bg-[#f7f8fa]">
           <ShoppingCart className="h-4 w-4" />
         </button>
@@ -67,6 +82,14 @@ export function TopHeader() {
         >
           <UserCircle2 className="h-5 w-5 text-[#9aa3af]" />
           <span className="font-medium">{profile?.name ?? profile?.userId ?? "User"}</span>
+          {appUser && <span className="text-[11px] text-[#9aa3af]">({appUser.username})</span>}
+        </button>
+        <button
+          title="Log out"
+          onClick={() => void logout()}
+          className="flex h-8 w-8 items-center justify-center rounded-sm border border-transparent text-[#7b8594] transition hover:bg-[#f7f8fa]"
+        >
+          <LogOut className="h-4 w-4" />
         </button>
       </div>
 
