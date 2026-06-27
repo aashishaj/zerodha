@@ -18,6 +18,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Timeframe } from "../../types";
 import { useTradingStore } from "../../store/useTradingStore";
+import { formatInstrumentLabel } from "../../utils/format";
 import { LayoutSetupPopover } from "./LayoutSetupPopover";
 import { IndicatorPopover } from "./IndicatorPopover";
 
@@ -145,7 +146,7 @@ export function ChartToolbar({ timeframe, onTimeframeChange }: ChartToolbarProps
             onClick={focusPrimarySearch}
             className="max-w-[140px] truncate font-medium text-[#444] hover:text-[#222]"
           >
-            {selectedInstrument?.tradingsymbol ?? "Select symbol"}
+            {selectedInstrument ? formatInstrumentLabel(selectedInstrument) : "Select symbol"}
           </button>
           <button
             title="Compare symbol"

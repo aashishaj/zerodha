@@ -190,3 +190,7 @@ export interface SearchQueryMeta {
   strike?: number;
   optionType?: "CE" | "PE";
 }
+
+export interface Funds {
+  availableCash: number;
+}

@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Instrument, OrderSide, OrderTicketPayload, OrderType, ProductType, Quote } from "../../types";
 import { useTradingStore } from "../../store/useTradingStore";
+import { formatInstrumentLabel, formatPrice } from "../../utils/format";
 
 interface OrderTicketProps {
   open: boolean;
@@ -65,6 +66,15 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   // Price / trigger enabled state
   const priceEnabled   = orderType === "LIMIT" || orderType === "SL";
   const triggerEnabled = orderType === "SL"    || orderType === "SL-M";
+
+  const availableCash = useTradingStore((s) => s.availableCash);
+
+  // Required margin = effective price × quantity (max amount). Use the entered
+  // price for LIMIT/SL orders, otherwise the last traded price.
+  const effectivePrice = priceEnabled && price ? Number(price) : quote?.last_price ?? 0;
+  const requiredMargin = effectivePrice * quantity;
+  const insufficient =
+    currentSide === "BUY" && availableCash != null && requiredMargin > availableCash;
 
   // Stable refs for values that must NOT re-trigger the reset.
   // quote and prefill update frequently (quotes every 5 s); they should only be
@@ -149,7 +159,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
       >
         <div>
           <div className="text-[15px] font-semibold leading-tight text-white">
-            {instrument.tradingsymbol}
+            {formatInstrumentLabel(instrument)}
           </div>
           <div className="mt-0.5 text-[12px] leading-tight text-white/70">
             {instrument.exchange} &middot; {instrument.segment}
@@ -341,11 +351,15 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
         <div className="space-y-0.5">
           <div className="text-[11px] text-[#9aa3af]">
             Required margin&nbsp;
-            <span className="font-medium text-[#444]">—</span>
+            <span className={`font-medium ${insufficient ? "text-red-600" : "text-[#444]"}`}>
+              ₹{formatPrice(requiredMargin)}
+            </span>
           </div>
           <div className="text-[11px] text-[#9aa3af]">
             Available cash&nbsp;
-            <span className="font-medium text-[#444]">—</span>
+            <span className="font-medium text-[#444]">
+              {availableCash == null ? "—" : `₹${formatPrice(availableCash)}`}
+            </span>
           </div>
         </div>
 

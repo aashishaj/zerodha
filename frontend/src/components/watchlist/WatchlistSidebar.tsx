@@ -1,4 +1,4 @@
-import { BarChart3 } from "lucide-react";
+import { BarChart3, ChevronLeft, ChevronRight, List } from "lucide-react";
 import { InstrumentSearch } from "./InstrumentSearch";
 import { WatchlistRow } from "./WatchlistRow";
 import { formatPrice, movementClass } from "../../utils/format";
@@ -17,6 +17,8 @@ export function WatchlistSidebar() {
     removeWatchlist,
     loadingInstrumentToken,
     quotes,
+    isWatchlistCollapsed,
+    toggleWatchlistCollapsed,
   } = useTradingStore();
 
   const indexQuote = quotes["NIFTY 50"];
@@ -26,7 +28,29 @@ export function WatchlistSidebar() {
       : 0;
 
   return (
-    <aside className="flex h-[calc(100vh-48px)] w-[320px] shrink-0 flex-col border-r border-[#e8edf3] bg-white">
+    <aside
+      className={`relative flex h-[calc(100vh-48px)] shrink-0 flex-col border-r border-[#e8edf3] bg-white transition-[width] duration-200 ease-in-out ${
+        isWatchlistCollapsed ? "w-12" : "w-[320px]"
+      }`}
+    >
+      {/* Collapse / expand toggle — sits on the right edge, visible in both states */}
+      <button
+        type="button"
+        onClick={toggleWatchlistCollapsed}
+        aria-label={isWatchlistCollapsed ? "Expand watchlist" : "Collapse watchlist"}
+        title={isWatchlistCollapsed ? "Expand watchlist" : "Collapse watchlist"}
+        className="absolute -right-3 top-1/2 z-30 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-[#e8edf3] bg-white text-[#6b7280] shadow-sm transition-colors hover:text-[#222]"
+      >
+        {isWatchlistCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+      </button>
+
+      {isWatchlistCollapsed ? (
+        <div className="flex flex-1 flex-col items-center gap-5 pt-4 text-[#9aa3af]">
+          <List className="h-5 w-5" />
+          <BarChart3 className="h-5 w-5" />
+        </div>
+      ) : (
+      <>
       <InstrumentSearch />
 
       <div className="flex items-center justify-between px-4 py-2 text-[12px] text-[#6b7280]">
@@ -135,6 +159,8 @@ export function WatchlistSidebar() {
         </div>
         <BarChart3 className="h-4 w-4 text-[#9aa3af]" />
       </div>
+      </>
+      )}
     </aside>
   );
 }

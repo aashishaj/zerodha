@@ -164,6 +164,21 @@ class ZerodhaFrontendAPI:
             "broker": payload.get("broker"),
         }
 
+    def funds(self) -> dict[str, Any]:
+        kite = self._get_kite()
+        # Zerodha integration point:
+        # margins() returns per-segment funds; expose the spendable equity cash.
+        margins = kite.margins()
+        equity = margins.get("equity", {}) if isinstance(margins, dict) else {}
+        available = equity.get("available", {}) if isinstance(equity, dict) else {}
+        if "live_balance" in available:
+            cash = available["live_balance"]
+        elif "cash" in available:
+            cash = available["cash"]
+        else:
+            cash = equity.get("net", 0.0)
+        return {"availableCash": float(cash or 0.0)}
+
     def instruments(self) -> list[dict[str, Any]]:
         self._ensure_instruments_loaded()
         assert self._raw_instruments is not None
@@ -547,6 +562,9 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     return
                 if parsed.path == "/api/profile":
                     self._send_json(api.profile())
+                    return
+                if parsed.path == "/api/funds":
+                    self._send_json(api.funds())
                     return
                 if parsed.path == "/api/instruments":
                     self._send_json(api.instruments())

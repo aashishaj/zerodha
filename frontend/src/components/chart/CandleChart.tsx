@@ -36,6 +36,8 @@ type ChartVolume = {
 
 export interface CandleChartHandle {
   resetView: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
   applyTick: (price: number) => void;
 }
 
@@ -259,12 +261,34 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     });
   };
 
+  // Zoom by scaling the visible bar span around its center. factor < 1 zooms
+  // in (fewer bars), factor > 1 zooms out (more bars).
+  const zoomByFactor = (factor: number) => {
+    const timeScale = chartRef.current?.timeScale();
+    const range = timeScale?.getVisibleLogicalRange();
+    if (!timeScale || !range) return;
+    const center = (range.from + range.to) / 2;
+    const half = Math.max(2.5, ((range.to - range.from) / 2) * factor);
+    timeScale.setVisibleLogicalRange({ from: center - half, to: center + half });
+  };
+
   useImperativeHandle(forwardedRef, () => ({
     resetView() {
       applyPriceScale();
-      if (chartRef.current && normalized.chartData.length) {
-        chartRef.current.timeScale().fitContent();
+      const curr = normalized.chartData.length;
+      if (chartRef.current && curr > 0) {
+        // Back to the original loaded zoom (most recent ~80 bars).
+        chartRef.current.timeScale().setVisibleLogicalRange({
+          from: Math.max(0, curr - 80),
+          to: curr + 2,
+        });
       }
+    },
+    zoomIn() {
+      zoomByFactor(0.7);
+    },
+    zoomOut() {
+      zoomByFactor(1.4);
     },
     applyTick(price: number) {
       if (!seriesRef.current || cleanedCandlesRef.current.length === 0) return;
@@ -444,6 +468,10 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     const values: Record<string, number | null> = {};
     const present = new Set<string>();
 
+    // Preserve the user's pan/zoom: the setData() calls below would otherwise
+    // reset the time scale to its default position on every poll.
+    const savedRange = chart.timeScale().getVisibleLogicalRange();
+
     for (const instance of indicatorInstances ?? []) {
       present.add(instance.id);
       const width = (instance.lineWidth ?? 2) as LineWidth;
@@ -490,19 +518,28 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       }
     }
 
+    if (savedRange) {
+      chart.timeScale().setVisibleLogicalRange(savedRange);
+    }
+
     indicatorValuesCallbackRef.current?.(values);
   }, [normalized, indicatorInstances]);
 
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
 
+    const timeScale = chartRef.current.timeScale();
+    // Capture before setData(), which would otherwise reset the time scale.
+    const savedRange = timeScale.getVisibleLogicalRange();
     const isNewView = viewKey !== lastFitViewKeyRef.current;
     const prev = prevDataLengthRef.current;
     const curr = normalized.chartData.length;
 
+    let didFullReload = false;
     if (isNewView || prev === 0 || curr < prev) {
       // Full reload: new instrument/timeframe, first load, or data shrunk (e.g. after reset)
       seriesRef.current.setData(normalized.chartData);
+      didFullReload = true;
     } else {
       // Incremental: use series.update() for the forming bar + any new bars.
       // Starting from prev-1 catches an in-progress candle whose OHLC changed since last tick.
@@ -516,11 +553,14 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     applyPriceScale();
 
     if (isNewView && curr > 0) {
-      chartRef.current.timeScale().setVisibleLogicalRange({
+      timeScale.setVisibleLogicalRange({
         from: Math.max(0, curr - 80),
         to: curr + 2,
       });
       lastFitViewKeyRef.current = viewKey;
+    } else if (didFullReload && savedRange) {
+      // Non-view-changing full reload: keep the user where they were panned/zoomed.
+      timeScale.setVisibleLogicalRange(savedRange);
     }
   }, [normalized.chartData, viewKey]);
 

@@ -24,6 +24,14 @@ class FakeKiteAPI:
     def profile(self):
         return {"user_id": "AB1234", "user_name": "Aashish"}
 
+    def margins(self, segment=None):
+        return {
+            "equity": {
+                "net": 12345.67,
+                "available": {"live_balance": 9876.54, "cash": 11000.0},
+            }
+        }
+
     def instruments(self, exchange):
         if exchange == "NSE":
             return [
@@ -134,6 +142,20 @@ class APIServerTests(unittest.TestCase):
             second = api._get_kite()
             self.assertIsNot(second, first)
             self.assertEqual(api._kite_access_token, "token-two")
+
+    def test_funds_returns_live_balance_as_available_cash(self):
+        api = self._build_api()
+        self.assertEqual(api.funds(), {"availableCash": 9876.54})
+
+    def test_funds_falls_back_to_net_when_available_missing(self):
+        api = self._build_api()
+
+        class NoAvailableKite(FakeKiteAPI):
+            def margins(self, segment=None):
+                return {"equity": {"net": 500.0}}
+
+        api._kite = NoAvailableKite()
+        self.assertEqual(api.funds(), {"availableCash": 500.0})
 
     def test_normalize_instrument_payload(self):
         payload = _normalize_instrument_payload(

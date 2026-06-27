@@ -1,5 +1,6 @@
 import type { Instrument } from "../../types";
 import { formatExpiry } from "../../utils/dates";
+import { formatInstrumentLabel } from "../../utils/format";
 
 interface SearchResultsProps {
   results: Instrument[];
@@ -28,7 +29,7 @@ export function SearchResults({ results, activeIndex, onSelect, onCompare, onAdd
           }`}
         >
           <button className="border-0 bg-transparent p-0 text-left" onClick={() => onSelect(instrument)}>
-            <div className="text-[13px] font-medium text-[#222]">{instrument.tradingsymbol}</div>
+            <div className="text-[13px] font-medium text-[#222]">{formatInstrumentLabel(instrument)}</div>
             <div className="mt-0.5 text-[11px] text-[#6b7280]">
               {instrument.name} · {instrument.segment} · {instrument.instrument_type}
               {instrument.expiry ? ` · ${formatExpiry(instrument.expiry)}` : ""}

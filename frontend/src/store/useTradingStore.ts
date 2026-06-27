@@ -7,6 +7,7 @@ import { watchlistService } from "../services/watchlistService";
 import { optionChainService } from "../services/optionChainService";
 import { orderService } from "../services/orderService";
 import { parseChartDate } from "../utils/dates";
+import { formatInstrumentLabel } from "../utils/format";
 import type {
   Candle,
   IndicatorInstance,
@@ -71,6 +72,7 @@ interface TradingState {
   quotes: Record<string, Quote>;
   candles: CandleCache;
   profile: { userId: string; name: string } | null;
+  availableCash: number | null;
   optionChainRows: OptionChainRow[];
   orders: Order[];
   selectedUnderlying: string;
@@ -84,8 +86,10 @@ interface TradingState {
   isMarketDepthOpen: boolean;
   selectedLayout: LayoutId;
   activePaneId: "primary" | "compare";
+  isWatchlistCollapsed: boolean;
   setLayout: (layout: LayoutId) => void;
   setActivePaneId: (id: "primary" | "compare") => void;
+  toggleWatchlistCollapsed: () => void;
   indicators: IndicatorSettings;
   setIndicators: (settings: IndicatorSettings) => void;
   indicatorInstances: IndicatorInstance[];
@@ -112,6 +116,7 @@ interface TradingState {
   removeWatchlist: (token: number) => void;
   openOrderTicket: (instrument: Instrument, side: OrderSide, prefill?: OrderTicketPrefill) => void;
   closeOrderTicket: () => void;
+  refreshFunds: () => Promise<void>;
   openMarketDepth: (instrument: Instrument) => Promise<void>;
   closeMarketDepth: () => void;
   setOptionChainFilters: (underlying: string, expiry: string) => Promise<void>;
@@ -133,7 +138,7 @@ interface TradingState {
 const toWatchlistItem = (instrument: Instrument, quote?: Quote): WatchlistItem => ({
   instrument_token: instrument.instrument_token,
   tradingsymbol: instrument.tradingsymbol,
-  displayName: instrument.tradingsymbol,
+  displayName: formatInstrumentLabel(instrument),
   exchange: instrument.exchange,
   segment: instrument.segment,
   ltp: quote?.last_price ?? instrument.last_price,
@@ -183,6 +188,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   quotes: {},
   candles: {},
   profile: null,
+  availableCash: null,
   optionChainRows: [],
   orders: [],
   selectedUnderlying: "NIFTY",
@@ -196,6 +202,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   isMarketDepthOpen: false,
   selectedLayout: (localStorage.getItem("chartLayout") as LayoutId | null) ?? "single",
   activePaneId: "primary",
+  isWatchlistCollapsed: localStorage.getItem("watchlistCollapsed") === "true",
   slSettings: ((): SLSettings => {
     const defaults = { defaultQty: 65, buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
     try {
@@ -457,9 +464,19 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       orderTicketPrefill: prefill ?? null,
       isOrderTicketOpen: true,
     });
+    // Pull the latest available cash whenever the ticket opens.
+    void get().refreshFunds();
   },
   closeOrderTicket() {
     set({ isOrderTicketOpen: false, activeOrderTicketInstrument: null, orderTicketPrefill: null });
+  },
+  async refreshFunds() {
+    try {
+      const funds = await marketDataService.getFunds();
+      set({ availableCash: funds.availableCash });
+    } catch {
+      set({ availableCash: null });
+    }
   },
   async openMarketDepth(instrument) {
     set({ marketDepthInstrument: instrument, isMarketDepthOpen: true });
@@ -500,6 +517,11 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   },
   setActivePaneId(id) {
     set({ activePaneId: id });
+  },
+  toggleWatchlistCollapsed() {
+    const next = !get().isWatchlistCollapsed;
+    localStorage.setItem("watchlistCollapsed", String(next));
+    set({ isWatchlistCollapsed: next });
   },
   setIndicators(settings) {
     localStorage.setItem("chartIndicators", JSON.stringify(settings));

@@ -1,6 +1,6 @@
 import apiClient from "./apiClient";
 import { mockQuotes } from "../mocks/quotes";
-import type { Quote } from "../types";
+import type { Funds, Quote } from "../types";
 
 const useMock = import.meta.env.VITE_USE_MOCK_DATA === "true";
 
@@ -21,6 +21,13 @@ export const marketDataService = {
     // Zerodha integration point:
     // Backend should manage access token server-side and return safe profile data here.
     const response = await apiClient.get("/profile");
+    return response.data;
+  },
+  async getFunds(): Promise<Funds> {
+    if (useMock) return { availableCash: 100000 };
+    // Zerodha integration point:
+    // Backend reads Kite margins server-side and returns the spendable equity cash.
+    const response = await apiClient.get<Funds>("/funds");
     return response.data;
   },
 };
