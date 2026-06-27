@@ -1,5 +1,6 @@
 import type { ReactNode, MouseEvent } from "react";
 import { BarChart3, Ellipsis, Layers3 } from "lucide-react";
+import { useAllowedSides } from "../../store/useAuthStore";
 
 interface WatchlistQuickActionsProps {
   loading?: boolean;
@@ -48,30 +49,35 @@ export function WatchlistQuickActions({
   onRemove,
   onMore,
 }: WatchlistQuickActionsProps) {
+  const { canBuy, canSell } = useAllowedSides();
   return (
     <div className="absolute right-3 top-1/2 hidden -translate-y-1/2 items-center gap-1 bg-white pl-2 group-hover:flex group-focus-within:flex">
-      <ActionButton
-        title="Buy (B)"
-        disabled={loading}
-        onClick={(event) => {
-          event.stopPropagation();
-          onBuy();
-        }}
-        className={`${baseClass} border-[#4184f3] bg-[#4184f3] text-white hover:brightness-95`}
-      >
-        B
-      </ActionButton>
-      <ActionButton
-        title="Sell (S)"
-        disabled={loading}
-        onClick={(event) => {
-          event.stopPropagation();
-          onSell();
-        }}
-        className={`${baseClass} border-[#ff5722] bg-[#ff5722] text-white hover:brightness-95`}
-      >
-        S
-      </ActionButton>
+      {canBuy && (
+        <ActionButton
+          title="Buy (B)"
+          disabled={loading}
+          onClick={(event) => {
+            event.stopPropagation();
+            onBuy();
+          }}
+          className={`${baseClass} border-[#4184f3] bg-[#4184f3] text-white hover:brightness-95`}
+        >
+          B
+        </ActionButton>
+      )}
+      {canSell && (
+        <ActionButton
+          title="Sell (S)"
+          disabled={loading}
+          onClick={(event) => {
+            event.stopPropagation();
+            onSell();
+          }}
+          className={`${baseClass} border-[#ff5722] bg-[#ff5722] text-white hover:brightness-95`}
+        >
+          S
+        </ActionButton>
+      )}
       <ActionButton
         title="Market depth"
         disabled={loading}

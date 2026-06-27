@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Instrument, OrderSide, OrderTicketPayload, OrderType, ProductType, Quote } from "../../types";
 import { useTradingStore } from "../../store/useTradingStore";
+import { useAllowedSides } from "../../store/useAuthStore";
 import { formatInstrumentLabel, formatPrice } from "../../utils/format";
 
 interface OrderTicketProps {
@@ -52,7 +53,16 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
       ? ["MIS", "NRML"] : ["MIS", "CNC"];
   }, [instrument]);
 
-  const [currentSide, setCurrentSide] = useState<OrderSide>(side);
+  const { canBuy, canSell } = useAllowedSides();
+  // A role may use its own side for any order, plus the opposite side when the
+  // order is a stop-loss (SL/SL-M) — i.e. to place a closing/protective order.
+  const allowedSide = (requested: OrderSide, isSL: boolean): OrderSide => {
+    if (isSL) return requested;
+    if (requested === "BUY") return canBuy ? "BUY" : "SELL";
+    return canSell ? "SELL" : "BUY";
+  };
+
+  const [currentSide, setCurrentSide] = useState<OrderSide>(allowedSide(side, false));
   const [activeTab,   setActiveTab]   = useState<"Quick" | "Regular" | "Iceberg">("Regular");
   const [product,     setProduct]     = useState<ProductType>("MIS");
   const [orderType,   setOrderType]   = useState<OrderType>("LIMIT");
@@ -66,6 +76,12 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   // Price / trigger enabled state
   const priceEnabled   = orderType === "LIMIT" || orderType === "SL";
   const triggerEnabled = orderType === "SL"    || orderType === "SL-M";
+
+  // Stop-loss orders may use either side (closing/protective); normal orders are
+  // restricted to the role's own side.
+  const isStopLoss = orderType === "SL" || orderType === "SL-M";
+  const canUseBuy  = isStopLoss || canBuy;
+  const canUseSell = isStopLoss || canSell;
 
   const availableCash = useTradingStore((s) => s.availableCash);
 
@@ -93,10 +109,12 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     if (!open || !instrument) return;
     const p = prefillRef.current;
     const q = quoteRef.current;
-    setCurrentSide(sideRef.current);
+    const nextOrderType = p?.orderType ?? "LIMIT";
+    const nextIsSL = nextOrderType === "SL" || nextOrderType === "SL-M";
+    setCurrentSide(allowedSide(sideRef.current, nextIsSL));
     setActiveTab("Regular");
     setProduct(defaultProduct);
-    setOrderType(p?.orderType ?? "LIMIT");
+    setOrderType(nextOrderType);
     setQuantity(defaultQty);
     setPrice(p?.price != null ? String(p.price) : q?.last_price ? String(q.last_price) : "");
     setTriggerPrice(p?.triggerPrice != null ? String(p.triggerPrice) : "");
@@ -112,6 +130,14 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [open, onClose]);
+
+  // If the order type changes away from SL and the current side is no longer
+  // permitted for this role, flip to the allowed side.
+  useEffect(() => {
+    if (isStopLoss) return;
+    if (currentSide === "BUY" && !canBuy) setCurrentSide(canSell ? "SELL" : "BUY");
+    if (currentSide === "SELL" && !canSell) setCurrentSide(canBuy ? "BUY" : "SELL");
+  }, [isStopLoss, currentSide, canBuy, canSell]);
 
   const theme = THEME[currentSide];
 
@@ -174,29 +200,33 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
 
       {/* ── 2. Buy / Sell selector — outside header, full-width ── */}
       <div className="flex" style={{ borderBottom: "1px solid #e0e0e0" }}>
-        <button
-          onClick={() => setCurrentSide("BUY")}
-          className="flex-1 py-2.5 text-[13px] font-bold tracking-wide transition-colors"
-          style={
-            currentSide === "BUY"
-              ? { backgroundColor: "#387ed1", color: "#fff" }
-              : { backgroundColor: "#fff", color: "#9aa3af" }
-          }
-        >
-          BUY
-        </button>
-        <div style={{ width: 1, backgroundColor: "#e0e0e0" }} />
-        <button
-          onClick={() => setCurrentSide("SELL")}
-          className="flex-1 py-2.5 text-[13px] font-bold tracking-wide transition-colors"
-          style={
-            currentSide === "SELL"
-              ? { backgroundColor: "#e5793b", color: "#fff" }
-              : { backgroundColor: "#fff", color: "#9aa3af" }
-          }
-        >
-          SELL
-        </button>
+        {canUseBuy && (
+          <button
+            onClick={() => setCurrentSide("BUY")}
+            className="flex-1 py-2.5 text-[13px] font-bold tracking-wide transition-colors"
+            style={
+              currentSide === "BUY"
+                ? { backgroundColor: "#387ed1", color: "#fff" }
+                : { backgroundColor: "#fff", color: "#9aa3af" }
+            }
+          >
+            BUY
+          </button>
+        )}
+        {canUseBuy && canUseSell && <div style={{ width: 1, backgroundColor: "#e0e0e0" }} />}
+        {canUseSell && (
+          <button
+            onClick={() => setCurrentSide("SELL")}
+            className="flex-1 py-2.5 text-[13px] font-bold tracking-wide transition-colors"
+            style={
+              currentSide === "SELL"
+                ? { backgroundColor: "#e5793b", color: "#fff" }
+                : { backgroundColor: "#fff", color: "#9aa3af" }
+            }
+          >
+            SELL
+          </button>
+        )}
       </div>
 
       {/* ── 3. Tabs ── */}

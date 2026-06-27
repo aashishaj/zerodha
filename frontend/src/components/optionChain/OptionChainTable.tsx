@@ -1,6 +1,7 @@
 import { BarChart2 } from "lucide-react";
 import type { OptionChainRow } from "../../types";
 import { formatCompact, formatPrice, movementClass } from "../../utils/format";
+import { useAllowedSides } from "../../store/useAuthStore";
 
 interface OptionChainTableProps {
   rows: OptionChainRow[];
@@ -33,6 +34,7 @@ export function OptionChainTable({
   onSell,
   compact = false,
 }: OptionChainTableProps) {
+  const { canBuy, canSell } = useAllowedSides();
   const totalCeOi = rows.reduce((s, r) => s + (r.ceOi ?? 0), 0);
   const totalPeOi = rows.reduce((s, r) => s + (r.peOi ?? 0), 0);
   const maxCeOi = Math.max(...rows.map((r) => r.ceOi ?? 0), 1);
@@ -113,14 +115,18 @@ export function OptionChainTable({
                   {/* Hover actions — opacity only, no layout shift */}
                   {ceToken != null && (
                     <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      <button
-                        onClick={() => onBuy(ceToken)}
-                        className="rounded bg-[#387ed1] px-1.5 py-0.5 text-[10px] font-semibold text-white"
-                      >B</button>
-                      <button
-                        onClick={() => onSell(ceToken)}
-                        className="rounded bg-[#e74c3c] px-1.5 py-0.5 text-[10px] font-semibold text-white"
-                      >S</button>
+                      {canBuy && (
+                        <button
+                          onClick={() => onBuy(ceToken)}
+                          className="rounded bg-[#387ed1] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                        >B</button>
+                      )}
+                      {canSell && (
+                        <button
+                          onClick={() => onSell(ceToken)}
+                          className="rounded bg-[#e74c3c] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                        >S</button>
+                      )}
                       <button
                         onClick={() => onOpenInstrument(ceToken)}
                         title="Open chart"
@@ -155,14 +161,18 @@ export function OptionChainTable({
                   </span>
                   {peToken != null && (
                     <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                      <button
-                        onClick={() => onBuy(peToken)}
-                        className="rounded bg-[#387ed1] px-1.5 py-0.5 text-[10px] font-semibold text-white"
-                      >B</button>
-                      <button
-                        onClick={() => onSell(peToken)}
-                        className="rounded bg-[#e74c3c] px-1.5 py-0.5 text-[10px] font-semibold text-white"
-                      >S</button>
+                      {canBuy && (
+                        <button
+                          onClick={() => onBuy(peToken)}
+                          className="rounded bg-[#387ed1] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                        >B</button>
+                      )}
+                      {canSell && (
+                        <button
+                          onClick={() => onSell(peToken)}
+                          className="rounded bg-[#e74c3c] px-1.5 py-0.5 text-[10px] font-semibold text-white"
+                        >S</button>
+                      )}
                       <button
                         onClick={() => onOpenInstrument(peToken)}
                         title="Open chart"

@@ -233,6 +233,24 @@ function AdminPanel() {
           </div>
         </div>
       </div>
+
+      <div className="mt-6 border-t border-slate-100 pt-4">
+        <h3 className="mb-2 text-sm font-semibold text-slate-800">Users ({users.length})</h3>
+        {users.length === 0 ? (
+          <p className="text-xs text-slate-400">No users yet.</p>
+        ) : (
+          <ul className="grid gap-1.5 sm:grid-cols-2">
+            {users.map((u) => (
+              <li key={u.id} className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-1.5">
+                <span className="text-xs font-medium text-slate-700">{u.username}</span>
+                <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-500">
+                  {u.role}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
