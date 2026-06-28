@@ -9,6 +9,7 @@ import { formatChange, formatInstrumentLabel, formatPercent, formatPrice, moveme
 import { Loader } from "../common/Loader";
 import { IconButton } from "../common/IconButton";
 import { useTradingStore } from "../../store/useTradingStore";
+import { useAllowedSides } from "../../store/useAuthStore";
 
 type DateRangeLabel = "1D" | "5D" | "1M" | "3M" | "6M" | "1Y" | "5Y";
 
@@ -61,6 +62,7 @@ export const ChartPane = memo(function ChartPane({
 }: ChartPaneProps) {
   const chartRef = useRef<CandleChartHandle>(null);
   const [activeDateRange, setActiveDateRange] = useState<DateRangeLabel>("1D");
+  const { canBuy, canSell } = useAllowedSides();
   const openOrderTicket    = useTradingStore((state) => state.openOrderTicket);
   const isOrderTicketOpen  = useTradingStore((state) => state.isOrderTicketOpen);
   const indicatorInstances = useTradingStore((state) => state.indicatorInstances);
@@ -373,21 +375,25 @@ export const ChartPane = memo(function ChartPane({
           onMouseDown={(e) => e.stopPropagation()}
         >
           <div className="flex overflow-hidden rounded-[3px] border border-[#d0d3d8] shadow-lg">
-            <button
-              onClick={() => handlePickSide("BUY")}
-              className="px-4 py-2 text-[12px] font-bold text-white transition-opacity hover:opacity-90"
-              style={{ backgroundColor: "#387ed1" }}
-            >
-              B
-            </button>
-            <div className="w-px bg-[#d0d3d8]" />
-            <button
-              onClick={() => handlePickSide("SELL")}
-              className="px-4 py-2 text-[12px] font-bold text-white transition-opacity hover:opacity-90"
-              style={{ backgroundColor: "#e5793b" }}
-            >
-              S
-            </button>
+            {canBuy && (
+              <button
+                onClick={() => handlePickSide("BUY")}
+                className="px-4 py-2 text-[12px] font-bold text-white transition-opacity hover:opacity-90"
+                style={{ backgroundColor: "#387ed1" }}
+              >
+                B
+              </button>
+            )}
+            {canBuy && canSell && <div className="w-px bg-[#d0d3d8]" />}
+            {canSell && (
+              <button
+                onClick={() => handlePickSide("SELL")}
+                className="px-4 py-2 text-[12px] font-bold text-white transition-opacity hover:opacity-90"
+                style={{ backgroundColor: "#e5793b" }}
+              >
+                S
+              </button>
+            )}
           </div>
         </div>
       )}

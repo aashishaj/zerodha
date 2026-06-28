@@ -139,6 +139,24 @@ class AccountAssignmentsViewTests(unittest.TestCase):
         self.api.delete_user(uid)
         self.assertIsNone(self.api.user_store().get_user_by_id(uid))
 
+    def test_remove_account_deletes_and_clears_assignments(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        acc = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(acc, uid)
+        self.api.remove_account(acc)
+        self.assertIsNone(self.api.account_store().get_account(acc))
+        self.assertEqual(self.api.user_accounts(uid), [])
+
+    def test_remove_unknown_account_raises(self):
+        with self.assertRaises(ValueError):
+            self.api.remove_account(999)
+
+    def test_trader_role_is_allowed(self):
+        uid = self.api.user_store().create_user("t1", "pw", "trader")
+        self.assertEqual(self.api.user_store().get_user_by_id(uid)["role"], "trader")
+        self.api.update_user_role(uid, "trader")
+        self.assertEqual(self.api.user_store().get_user_by_id(uid)["role"], "trader")
+
     def test_cannot_edit_super_admin(self):
         admin = self.api.user_store().create_user("root", "pw", "super_admin")
         with self.assertRaises(PermissionError):

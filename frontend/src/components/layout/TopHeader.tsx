@@ -40,13 +40,15 @@ export function TopHeader() {
           {navItems.map((item) => {
             const isActive =
               (item === "Dashboard" && mainTab === "chart") ||
-              (item === "Orders" && mainTab === "orders");
+              (item === "Orders" && mainTab === "orders") ||
+              (item === "Holdings" && mainTab === "holdings");
             return (
               <button
                 key={item}
                 onClick={() => {
                   if (item === "Dashboard") setMainTab("chart");
                   else if (item === "Orders") setMainTab("orders");
+                  else if (item === "Holdings") setMainTab("holdings");
                 }}
                 className={`border-0 bg-transparent p-0 text-[13px] ${
                   isActive ? "font-medium text-[#222]" : "text-[#6b7280]"

@@ -67,4 +67,8 @@ export const accountsService = {
   async unassign(accountId: number, userId: number): Promise<void> {
     await apiClient.post("/accounts/unassign", { accountId, userId });
   },
+
+  async deleteAccount(accountId: number): Promise<void> {
+    await apiClient.post(`/accounts/${accountId}/delete`);
+  },
 };

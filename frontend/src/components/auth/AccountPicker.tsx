@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LogOut, Plus, ShieldCheck } from "lucide-react";
+import { LogOut, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useAuthStore } from "../../store/useAuthStore";
 import { accountsService } from "../../services/accountsService";
 import type { AccountSummary, AppRole, AppUser } from "../../types";
@@ -51,6 +51,22 @@ export function AccountPicker() {
     }
   };
 
+  const handleDeleteAccount = async (account: { id: number; label: string; zerodha_user_id: string }) => {
+    if (
+      !window.confirm(
+        `Remove account "${account.label}" (${account.zerodha_user_id})? This deletes it and all its user assignments.`,
+      )
+    )
+      return;
+    setError(null);
+    try {
+      await accountsService.deleteAccount(account.id);
+      await loadAccounts();
+    } catch {
+      setError("Could not remove the account.");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-12">
       <div className="mx-auto max-w-3xl">
@@ -81,29 +97,50 @@ export function AccountPicker() {
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
             {accounts.map((account) => (
-              <button
-                key={account.id}
-                onClick={() => account.connected && void handlePick(account.id)}
-                disabled={!account.connected}
-                className={`flex flex-col items-center rounded-2xl border bg-white p-5 text-center transition ${
-                  account.connected
-                    ? "border-slate-200 hover:border-blue-400 hover:shadow-sm"
-                    : "cursor-not-allowed border-slate-100 opacity-60"
-                }`}
-              >
-                <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-lg font-semibold text-blue-600">
-                  {initials(account.label)}
-                </div>
-                <div className="text-sm font-semibold text-slate-900">{account.label}</div>
-                <div className="text-[11px] text-slate-400">{account.zerodha_user_id}</div>
+              <div key={account.id} className="relative">
                 <div
-                  className={`mt-2 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                    account.connected ? "bg-green-50 text-green-600" : "bg-slate-100 text-slate-400"
+                  onClick={() => account.connected && void handlePick(account.id)}
+                  className={`flex w-full flex-col items-center rounded-2xl border bg-white p-5 text-center transition ${
+                    account.connected
+                      ? "cursor-pointer border-slate-200 hover:border-blue-400 hover:shadow-sm"
+                      : "border-slate-100"
                   }`}
                 >
-                  {account.connected ? "Connected" : "Not connected"}
+                  <div className={`mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-lg font-semibold text-blue-600 ${account.connected ? "" : "opacity-60"}`}>
+                    {initials(account.label)}
+                  </div>
+                  <div className={`text-sm font-semibold text-slate-900 ${account.connected ? "" : "opacity-60"}`}>{account.label}</div>
+                  <div className={`text-[11px] text-slate-400 ${account.connected ? "" : "opacity-60"}`}>{account.zerodha_user_id}</div>
+                  {account.connected ? (
+                    <div className="mt-2 rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-600">
+                      Connected
+                    </div>
+                  ) : isAdmin ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void handleConnect();
+                      }}
+                      className="mt-2 rounded-lg bg-[#e5382f] px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-[#c9302a]"
+                    >
+                      Connect
+                    </button>
+                  ) : (
+                    <div className="mt-2 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-400">
+                      Not connected
+                    </div>
+                  )}
                 </div>
-              </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => void handleDeleteAccount(account)}
+                    title="Remove account"
+                    className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-400 shadow-sm transition hover:bg-red-50 hover:text-red-500"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}
@@ -147,30 +184,17 @@ function AdminPanel() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<AppRole>("buyer");
-  const [accountId, setAccountId] = useState<number | "">("");
-  const [userId, setUserId] = useState<number | "">("");
-  const [assigned, setAssigned] = useState<AppUser[]>([]);
   const [editUserId, setEditUserId] = useState<number | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const refreshUsers = () => {
-    void accountsService.listUsers().then(setUsers).catch(() => setUsers([]));
-  };
-  useEffect(refreshUsers, []);
-
-  const assignable = users.filter((u) => u.role !== "super_admin");
-  const editUser = users.find((u) => u.id === editUserId) ?? null;
-
-  const refreshAssigned = (id: number | "") => {
-    if (id === "") {
-      setAssigned([]);
-      return;
-    }
-    void accountsService.assignedUsers(Number(id)).then(setAssigned).catch(() => setAssigned([]));
-  };
+  const refreshUsers = () =>
+    accountsService.listUsers().then(setUsers).catch(() => setUsers([]));
   useEffect(() => {
-    refreshAssigned(accountId);
-  }, [accountId]);
+    void refreshUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const editUser = users.find((u) => u.id === editUserId) ?? null;
 
   const handleCreate = async () => {
     setMsg(null);
@@ -179,32 +203,10 @@ function AdminPanel() {
       await accountsService.createUser(username, password, role);
       setUsername("");
       setPassword("");
-      setMsg(`Created ${role} "${username}".`);
-      refreshUsers();
+      setMsg(`Created ${role} "${username}". Click them in the Users list below to assign accounts.`);
+      await refreshUsers();
     } catch {
       setMsg("Could not create user (name may already exist).");
-    }
-  };
-
-  const handleAdd = async () => {
-    setMsg(null);
-    if (accountId === "" || userId === "") return;
-    try {
-      await accountsService.assign(Number(accountId), Number(userId));
-      setUserId("");
-      refreshAssigned(accountId);
-    } catch {
-      setMsg("Assignment failed.");
-    }
-  };
-
-  const handleRemove = async (uid: number) => {
-    setMsg(null);
-    try {
-      await accountsService.unassign(Number(accountId), uid);
-      refreshAssigned(accountId);
-    } catch {
-      setMsg("Could not remove access.");
     }
   };
 
@@ -215,7 +217,7 @@ function AdminPanel() {
     <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
       {msg && <div className="mb-4 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">{msg}</div>}
 
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="max-w-sm">
         <div>
           <h3 className="mb-3 text-sm font-semibold text-slate-800">Create user</h3>
           <div className="space-y-2">
@@ -224,61 +226,11 @@ function AdminPanel() {
             <select className={field} value={role} onChange={(e) => setRole(e.target.value as AppRole)}>
               <option value="buyer">Buyer (buy only)</option>
               <option value="seller">Seller (sell only)</option>
+              <option value="trader">Trader (buy &amp; sell)</option>
             </select>
             <button onClick={() => void handleCreate()} className="h-9 w-full rounded-lg bg-blue-600 text-sm font-semibold text-white transition hover:bg-blue-700">
               Create user
             </button>
-          </div>
-        </div>
-
-        <div>
-          <h3 className="mb-3 text-sm font-semibold text-slate-800">Account access</h3>
-          <div className="space-y-2">
-            <select className={field} value={accountId} onChange={(e) => setAccountId(e.target.value ? Number(e.target.value) : "")}>
-              <option value="">Select account…</option>
-              {accounts.map((a) => (
-                <option key={a.id} value={a.id}>{a.label} ({a.zerodha_user_id})</option>
-              ))}
-            </select>
-
-            {accountId !== "" && (
-              <>
-                <div className="rounded-lg border border-slate-200 px-3 py-2">
-                  <div className="mb-1 text-[11px] font-medium text-slate-500">Has access</div>
-                  {assigned.length === 0 ? (
-                    <p className="text-xs text-slate-400">No users assigned.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-1.5">
-                      {assigned.map((u) => (
-                        <span key={u.id} className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
-                          {u.username} <span className="text-slate-400">· {u.role}</span>
-                          <button
-                            onClick={() => void handleRemove(u.id)}
-                            title="Remove access"
-                            className="ml-0.5 text-slate-400 hover:text-red-500"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <select className={field} value={userId} onChange={(e) => setUserId(e.target.value ? Number(e.target.value) : "")}>
-                    <option value="">Add user…</option>
-                    {assignable
-                      .filter((u) => !assigned.some((a) => a.id === u.id))
-                      .map((u) => (
-                        <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
-                      ))}
-                  </select>
-                  <button onClick={() => void handleAdd()} className="h-9 shrink-0 rounded-lg bg-slate-800 px-4 text-sm font-semibold text-white transition hover:bg-slate-900">
-                    Add
-                  </button>
-                </div>
-              </>
-            )}
           </div>
         </div>
       </div>
@@ -385,6 +337,7 @@ function UserEditor({
             <select className={field} value={role} onChange={(e) => setRole(e.target.value as AppRole)}>
               <option value="buyer">Buyer (buy only)</option>
               <option value="seller">Seller (sell only)</option>
+              <option value="trader">Trader (buy &amp; sell)</option>
             </select>
             <button
               onClick={() => void run(() => accountsService.setUserRole(user.id, role).then(onChanged), "Role updated.")}

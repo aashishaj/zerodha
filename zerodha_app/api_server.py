@@ -25,6 +25,11 @@ try:
 except ModuleNotFoundError:
     KiteConnect = None
 
+try:
+    from kiteconnect.exceptions import TokenException as _TOKEN_EXCEPTION
+except Exception:
+    _TOKEN_EXCEPTION = None
+
 
 LOGGER = logging.getLogger(__name__)
 SUPPORTED_HISTORICAL_INTERVALS = {
@@ -192,6 +197,13 @@ class ZerodhaFrontendAPI:
     def app_user_for_token(self, token: str | None) -> dict[str, Any] | None:
         return self.user_store().get_session_user(token)
 
+    def handle_token_invalid(self) -> None:
+        """Evict the active account's rejected token so it flips to 'not connected'."""
+        account_user_id = self._active_account_user_id()
+        AuthManager(self.options.settings).invalidate_token(account_user_id)
+        self._kite_by_account.pop(account_user_id, None)
+        self._broadcaster_by_account.pop(account_user_id, None)
+
     def app_logout(self, token: str | None) -> None:
         self.user_store().delete_session(token)
 
@@ -249,6 +261,17 @@ class ZerodhaFrontendAPI:
                 assigned.append(public_user(user))
         return assigned
 
+    def remove_account(self, account_id: int) -> None:
+        """Delete an account, evict its token, and drop its assignments (cascade)."""
+        account = self.account_store().get_account(account_id)
+        if account is None:
+            raise ValueError("Account not found.")
+        user_id = account["zerodha_user_id"]
+        AuthManager(self.options.settings).invalidate_token(user_id)
+        self._kite_by_account.pop(user_id, None)
+        self._broadcaster_by_account.pop(user_id, None)
+        self.account_store().delete_account(account_id)
+
     def assign_account(self, account_id: int, user_id: int) -> None:
         if self.account_store().get_account(account_id) is None:
             raise ValueError("Account not found.")
@@ -271,8 +294,8 @@ class ZerodhaFrontendAPI:
 
     def update_user_role(self, user_id: int, role: str) -> None:
         self._editable_user(user_id)
-        if role not in ("buyer", "seller"):
-            raise ValueError("Role must be 'buyer' or 'seller'.")
+        if role not in ("buyer", "seller", "trader"):
+            raise ValueError("Role must be 'buyer', 'seller', or 'trader'.")
         self.user_store().set_role(user_id, role)
 
     def reset_user_password(self, user_id: int, password: str) -> None:
@@ -579,9 +602,12 @@ class ZerodhaFrontendAPI:
         if entry is not None and (cached is None or cached == entry[1]):
             return entry[0]
 
-        access_token = cached if cached is not None else auth.get_access_token(
-            auto_login=self.options.login_if_needed
-        )
+        if cached is None:
+            # The API server never logs in interactively (it is headless and
+            # account-scoped). A missing token means the account must be
+            # (re)connected via the OAuth flow.
+            raise RuntimeError("This account is not connected. Ask an admin to reconnect it.")
+        access_token = cached
         kite = KiteConnect(api_key=self.options.settings.api_key)
         kite.set_access_token(access_token)
         self._kite_by_account[account_user_id] = (kite, access_token)
@@ -727,6 +753,13 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                         return
                     active_id = api.user_store().get_active_account_id(me_token)
                     active = api.account_store().get_account(active_id) if active_id else None
+                    # Don't surface an account whose token is gone — it would
+                    # boot the dashboard straight into a token error. Force the
+                    # user back to the picker to reconnect/reselect.
+                    if active is not None:
+                        connected = AuthManager(api.options.settings).connected_account_user_ids()
+                        if active["zerodha_user_id"] not in connected:
+                            active = None
                     self._send_json(
                         {
                             "ok": True,
@@ -830,6 +863,13 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 if _is_client_disconnect(exc):
                     LOGGER.debug("Client disconnected during GET %s", parsed.path)
                     return
+                if _TOKEN_EXCEPTION is not None and isinstance(exc, _TOKEN_EXCEPTION):
+                    api.handle_token_invalid()
+                    self._send_json(
+                        {"ok": False, "error": "Account session expired. Reconnect required.", "code": "TOKEN_INVALID"},
+                        status=409,
+                    )
+                    return
                 LOGGER.exception("API GET failed")
                 self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
@@ -898,6 +938,20 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     api.unassign_account(int(body.get("accountId") or 0), int(body.get("userId") or 0))
                     self._send_json({"ok": True})
                     return
+                if parsed.path.startswith("/api/accounts/") and parsed.path.endswith("/delete"):
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    account_id_text = parsed.path.split("/")[3]
+                    if not account_id_text.isdigit():
+                        self.send_error(404, "Not found")
+                        return
+                    try:
+                        api.remove_account(int(account_id_text))
+                    except ValueError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=400)
+                        return
+                    self._send_json({"ok": True})
+                    return
                 if parsed.path.startswith("/api/app/users/"):
                     if not self._require_role(user, "super_admin"):
                         return
@@ -946,6 +1000,13 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
             except Exception as exc:
                 if _is_client_disconnect(exc):
                     LOGGER.debug("Client disconnected during POST %s", parsed.path)
+                    return
+                if _TOKEN_EXCEPTION is not None and isinstance(exc, _TOKEN_EXCEPTION):
+                    api.handle_token_invalid()
+                    self._send_json(
+                        {"ok": False, "error": "Account session expired. Reconnect required.", "code": "TOKEN_INVALID"},
+                        status=409,
+                    )
                     return
                 LOGGER.exception("API POST failed")
                 self._send_json({"ok": False, "error": str(exc)}, status=500)

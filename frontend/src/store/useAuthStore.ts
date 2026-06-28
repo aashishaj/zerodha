@@ -78,7 +78,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 export const useAllowedSides = (): { canBuy: boolean; canSell: boolean } => {
   const role = useAuthStore((state) => state.user?.role);
   return {
-    canBuy: role === "super_admin" || role === "buyer",
-    canSell: role === "super_admin" || role === "seller",
+    canBuy: role === "super_admin" || role === "trader" || role === "buyer",
+    canSell: role === "super_admin" || role === "trader" || role === "seller",
   };
 };

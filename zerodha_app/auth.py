@@ -62,6 +62,16 @@ class AuthManager:
             return store["by_account"].get(account_user_id, {}).get(current_date.isoformat())
         return self._resolve_legacy_token(store["legacy"], current_date)
 
+    def invalidate_token(self, account_user_id: str | None = None, target_date: date | None = None) -> None:
+        """Drop today's cached token for an account (e.g. after Kite rejects it)."""
+        store = self._load_store(self.settings.token_cache_path)
+        day = (target_date or date.today()).isoformat()
+        if account_user_id and account_user_id in store["by_account"]:
+            store["by_account"][account_user_id].pop(day, None)
+        store["legacy"].pop(day, None)
+        ensure_runtime_dirs(self.settings)
+        self.settings.token_cache_path.write_text(json.dumps(store, indent=2))
+
     def connected_account_user_ids(self, target_date: date | None = None) -> set[str]:
         """User ids that have a cached token for the given day."""
         current_date = (target_date or date.today()).isoformat()

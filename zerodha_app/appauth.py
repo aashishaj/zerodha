@@ -13,7 +13,7 @@ from typing import Any
 
 LOGGER = logging.getLogger(__name__)
 
-VALID_ROLES: tuple[str, ...] = ("super_admin", "seller", "buyer")
+VALID_ROLES: tuple[str, ...] = ("super_admin", "trader", "seller", "buyer")
 _PBKDF2_ITERATIONS = 600_000
 _SESSION_TTL_SECONDS = 12 * 60 * 60
 
