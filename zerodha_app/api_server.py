@@ -690,6 +690,11 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
 
+            # ── Static files — serve immediately for any non-API path ──────────
+            if not parsed.path.startswith("/api/") and _DIST_DIR.is_dir():
+                self._serve_static(parsed.path)
+                return
+
             # ── SSE live-tick stream — long-lived connection, handled separately ──
             if parsed.path == "/api/ticks/stream":
                 token = self._get_cookie("sid")
@@ -879,11 +884,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 LOGGER.exception("API GET failed")
                 self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
-            # ── Static file serving for production (frontend/dist/) ──────────
-            if _DIST_DIR.is_dir():
-                self._serve_static(parsed.path)
-            else:
-                self.send_error(404, "Not found")
+            self.send_error(404, "Not found")
 
         def _serve_static(self, url_path: str) -> None:
             """Serve files from frontend/dist/, falling back to index.html for SPA routing."""
