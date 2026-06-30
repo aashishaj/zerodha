@@ -152,6 +152,11 @@ class AccountStore:
                 (user_id, account_id),
             )
 
+    def remove_user(self, user_id: int) -> None:
+        """Drop all of a user's account assignments (used when deleting a user)."""
+        with self._connect() as connection:
+            connection.execute("DELETE FROM user_accounts WHERE user_id = ?", (user_id,))
+
     def is_assigned(self, user_id: int, account_id: int) -> bool:
         with self._connect() as connection:
             row = connection.execute(

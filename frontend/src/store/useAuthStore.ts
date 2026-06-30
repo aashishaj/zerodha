@@ -69,3 +69,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ activeAccount: null });
   },
 }));
+
+/**
+ * Which order sides the signed-in role may use. Drives UI gating so a seller
+ * never sees a Buy action and a buyer never sees a Sell action (super_admin
+ * sees both). Presentation only.
+ */
+export const useAllowedSides = (): { canBuy: boolean; canSell: boolean } => {
+  const role = useAuthStore((state) => state.user?.role);
+  return {
+    canBuy: role === "super_admin" || role === "trader" || role === "buyer",
+    canSell: role === "super_admin" || role === "trader" || role === "seller",
+  };
+};

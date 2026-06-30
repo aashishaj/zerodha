@@ -4,7 +4,8 @@ import { useTradingStore } from "../../store/useTradingStore";
 import { OrderTicket } from "../watchlist/OrderTicket";
 import { MarketDepth } from "../watchlist/MarketDepth";
 import { WatchlistSidebar } from "../watchlist/WatchlistSidebar";
-import { OrdersPanel } from "../orders/OrdersPanel";
+import { OrdersTab } from "../orders/OrdersTab";
+import { HoldingsTab } from "../holdings/HoldingsTab";
 
 export function AppShell() {
   const {
@@ -30,7 +31,11 @@ export function AppShell() {
           </>
         ) : mainTab === "orders" ? (
           <div className="w-full">
-            <OrdersPanel />
+            <OrdersTab />
+          </div>
+        ) : mainTab === "holdings" ? (
+          <div className="w-full">
+            <HoldingsTab />
           </div>
         ) : null}
       </div>

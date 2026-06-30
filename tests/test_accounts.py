@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 from zerodha_app.accounts import AccountStore
+from zerodha_app.api_server import APIOptions, ZerodhaFrontendAPI
 from zerodha_app.appauth import UserStore
 from zerodha_app.auth import AuthManager
 from zerodha_app.config import Settings
@@ -90,6 +91,91 @@ class PerAccountTokenTests(unittest.TestCase):
         self.assertEqual(self.auth.get_cached_access_token(), "legacy-token")
         self.assertIsNone(self.auth.get_cached_access_token("MKQ150"))
         self.assertEqual(self.auth.connected_account_user_ids(), set())
+
+
+class AccountAssignmentsViewTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        settings = Settings(
+            api_key="k",
+            api_secret="s",
+            token_cache_path=Path(self._tmp.name) / "tokens.json",
+            watchlist_path=Path(self._tmp.name) / "watchlist.json",
+            app_db_path=Path(self._tmp.name) / "app.db",
+        )
+        self.api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_account_assignments_returns_public_users(self):
+        buyer = self.api.user_store().create_user("buyer1", "pw", "buyer")
+        self.api.user_store().create_user("seller1", "pw", "seller")
+        account_id = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(account_id, buyer)
+
+        assigned = self.api.account_assignments(account_id)
+        self.assertEqual([u["username"] for u in assigned], ["buyer1"])
+        self.assertNotIn("password_hash", assigned[0])
+
+    def test_assign_unknown_user_or_account_raises(self):
+        account_id = self.api.account_store().upsert_account("MKQ150", label="A")
+        with self.assertRaises(ValueError):
+            self.api.assign_account(account_id, 999)
+        with self.assertRaises(ValueError):
+            self.api.assign_account(999, 1)
+
+    def test_edit_user_role_password_active_delete(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        self.api.update_user_role(uid, "seller")
+        self.assertEqual(self.api.user_store().get_user_by_id(uid)["role"], "seller")
+
+        self.api.reset_user_password(uid, "newpw")
+        self.assertIsNotNone(self.api.user_store().authenticate("b1", "newpw"))
+
+        self.api.set_user_active(uid, False)
+        self.assertIsNone(self.api.user_store().authenticate("b1", "newpw"))
+
+        self.api.delete_user(uid)
+        self.assertIsNone(self.api.user_store().get_user_by_id(uid))
+
+    def test_remove_account_deletes_and_clears_assignments(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        acc = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(acc, uid)
+        self.api.remove_account(acc)
+        self.assertIsNone(self.api.account_store().get_account(acc))
+        self.assertEqual(self.api.user_accounts(uid), [])
+
+    def test_remove_unknown_account_raises(self):
+        with self.assertRaises(ValueError):
+            self.api.remove_account(999)
+
+    def test_trader_role_is_allowed(self):
+        uid = self.api.user_store().create_user("t1", "pw", "trader")
+        self.assertEqual(self.api.user_store().get_user_by_id(uid)["role"], "trader")
+        self.api.update_user_role(uid, "trader")
+        self.assertEqual(self.api.user_store().get_user_by_id(uid)["role"], "trader")
+
+    def test_cannot_edit_super_admin(self):
+        admin = self.api.user_store().create_user("root", "pw", "super_admin")
+        with self.assertRaises(PermissionError):
+            self.api.update_user_role(admin, "buyer")
+        with self.assertRaises(PermissionError):
+            self.api.delete_user(admin)
+
+    def test_user_accounts_lists_assignments(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        acc = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(acc, uid)
+        self.assertEqual([a["zerodha_user_id"] for a in self.api.user_accounts(uid)], ["MKQ150"])
+
+    def test_delete_user_clears_assignments(self):
+        uid = self.api.user_store().create_user("b1", "pw", "buyer")
+        acc = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.assign_account(acc, uid)
+        self.api.delete_user(uid)
+        self.assertEqual(self.api.account_store().assigned_user_ids(acc), [])
 
 
 class SessionAccountTests(unittest.TestCase):

@@ -14,7 +14,7 @@ export type Timeframe =
   | "1h"
   | "1d"
   | "1w";
-export type MainTab = "chart" | "option-chain" | "fundamentals" | "orders";
+export type MainTab = "chart" | "option-chain" | "fundamentals" | "orders" | "holdings";
 export type LayoutId = "single" | "twoVertical" | "twoHorizontal";
 
 export interface IndicatorSettings {
@@ -195,12 +195,13 @@ export interface Funds {
   availableCash: number;
 }
 
-export type AppRole = "super_admin" | "seller" | "buyer";
+export type AppRole = "super_admin" | "trader" | "seller" | "buyer";
 
 export interface AppUser {
   id: number;
   username: string;
   role: AppRole;
+  active?: boolean;
 }
 
 export interface AccountSummary {
