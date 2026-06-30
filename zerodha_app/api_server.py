@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
+import os
 import queue
 import threading
 import uuid
@@ -51,7 +53,11 @@ SUPPORTED_HISTORICAL_INTERVALS = {
 }
 
 
-FRONTEND_URL = "http://127.0.0.1:5173"
+FRONTEND_URL = os.getenv("APP_URL", "http://127.0.0.1:5173").rstrip("/")
+
+# Root of the built React app. When present the Python server serves it directly
+# so no separate Vite dev server or nginx is needed in production.
+_DIST_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 _SESSION_COOKIE_MAX_AGE = 12 * 60 * 60
 
 
@@ -873,7 +879,39 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 LOGGER.exception("API GET failed")
                 self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
-            self.send_error(404, "Not found")
+            # ── Static file serving for production (frontend/dist/) ──────────
+            if _DIST_DIR.is_dir():
+                self._serve_static(parsed.path)
+            else:
+                self.send_error(404, "Not found")
+
+        def _serve_static(self, url_path: str) -> None:
+            """Serve files from frontend/dist/, falling back to index.html for SPA routing."""
+            # Strip query string and normalise path
+            clean = url_path.split("?")[0].lstrip("/")
+            candidate = (_DIST_DIR / clean).resolve()
+            # Prevent path traversal outside dist
+            try:
+                candidate.relative_to(_DIST_DIR.resolve())
+            except ValueError:
+                self.send_error(403, "Forbidden")
+                return
+            if not candidate.exists() or candidate.is_dir():
+                candidate = _DIST_DIR / "index.html"
+            if not candidate.exists():
+                self.send_error(404, "Not found")
+                return
+            data = candidate.read_bytes()
+            mime, _ = mimetypes.guess_type(str(candidate))
+            self.send_response(200)
+            self.send_header("Content-Type", mime or "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            if candidate.suffix in {".js", ".css", ".woff2", ".woff", ".ttf", ".png", ".jpg", ".svg", ".ico"}:
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            else:
+                self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            self.wfile.write(data)
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)

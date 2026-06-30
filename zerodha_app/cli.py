@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from datetime import datetime
 
 from zerodha_app.config import load_settings, load_watchlist
@@ -157,8 +158,8 @@ def build_parser() -> argparse.ArgumentParser:
         "api",
         help="Run a local JSON API for the React frontend using Zerodha data",
     )
-    api_parser.add_argument("--host", default="127.0.0.1", help="API host")
-    api_parser.add_argument("--port", type=_positive_int, default=8080, help="API port")
+    api_parser.add_argument("--host", default=os.getenv("APP_HOST", "127.0.0.1"), help="API host")
+    api_parser.add_argument("--port", type=_positive_int, default=int(os.getenv("APP_PORT", "8080")), help="API port")
     api_parser.add_argument(
         "--login-if-needed",
         action="store_true",

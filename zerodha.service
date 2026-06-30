@@ -1,0 +1,17 @@
+[Unit]
+Description=Zerodha Trading Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/zerodha
+EnvironmentFile=/home/ubuntu/zerodha/.env
+ExecStart=/home/ubuntu/zerodha/venv/bin/python run.py api --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
