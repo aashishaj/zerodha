@@ -1,10 +1,39 @@
+import { useCallback, useRef, useState } from "react";
 import { BarChart3, ChevronLeft, ChevronRight, List } from "lucide-react";
 import { InstrumentSearch } from "./InstrumentSearch";
 import { WatchlistRow } from "./WatchlistRow";
 import { formatPrice, movementClass } from "../../utils/format";
 import { useTradingStore } from "../../store/useTradingStore";
 
+const MIN_WIDTH = 200;
+const MAX_WIDTH = 600;
+const DEFAULT_WIDTH = 320;
+
 export function WatchlistSidebar() {
+  const [sidebarWidth, setSidebarWidth] = useState(DEFAULT_WIDTH);
+  const [dragging, setDragging] = useState(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(DEFAULT_WIDTH);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = sidebarWidth;
+    setDragging(true);
+
+    const onMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - dragStartX.current;
+      setSidebarWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStartWidth.current + delta)));
+    };
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [sidebarWidth]);
+
   const {
     watchlist,
     instruments,
@@ -29,10 +58,19 @@ export function WatchlistSidebar() {
 
   return (
     <aside
-      className={`relative flex h-[calc(100vh-48px)] shrink-0 flex-col border-r border-[#e8edf3] bg-white transition-[width] duration-200 ease-in-out ${
-        isWatchlistCollapsed ? "w-12" : "w-[320px]"
-      }`}
+      style={isWatchlistCollapsed ? undefined : { width: sidebarWidth }}
+      className={`relative flex h-[calc(100vh-48px)] shrink-0 flex-col border-r border-[#e8edf3] bg-white ${
+        isWatchlistCollapsed ? "w-12 transition-[width] duration-200 ease-in-out" : ""
+      } ${dragging ? "select-none" : ""}`}
     >
+      {/* Drag-to-resize handle — only shown when expanded */}
+      {!isWatchlistCollapsed && (
+        <div
+          onMouseDown={onDragStart}
+          className="absolute right-0 top-0 z-20 h-full w-1 cursor-col-resize hover:bg-[#4184f3]/30"
+        />
+      )}
+
       {/* Collapse / expand toggle — sits on the right edge, visible in both states */}
       <button
         type="button"
