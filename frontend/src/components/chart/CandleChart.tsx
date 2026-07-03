@@ -378,6 +378,11 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     });
     chartRef.current = chart;
 
+    // Remove the TradingView attribution logo injected by lightweight-charts
+    containerRef.current.querySelectorAll("a").forEach((a) => {
+      if (a.href.includes("tradingview")) a.remove();
+    });
+
     const candleSeries = chart.addCandlestickSeries({
       upColor: "#1a9b5f",
       downColor: "#de4b4b",

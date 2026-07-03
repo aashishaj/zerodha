@@ -19,7 +19,7 @@ body {
 }
 
 /* Hide the TradingView attribution logo injected by lightweight-charts */
-.tv-lightweight-charts a[href*="tradingview"] {
+a[href*="tradingview.com"] {
   display: none !important;
 }
 
