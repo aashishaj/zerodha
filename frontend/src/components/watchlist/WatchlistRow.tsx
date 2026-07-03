@@ -45,7 +45,7 @@ export function WatchlistRow({
 
       <div className={`flex min-w-0 flex-1 items-center ${active ? "pl-2" : ""}`}>
         <div className="min-w-0">
-          <div className={`truncate text-[13px] font-medium ${toneClass}`}>{item.displayName}</div>
+          <div className={`text-[13px] font-medium leading-tight ${toneClass}`}>{item.displayName}</div>
           <div className="mt-0.5 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.02em] text-[#9aa3af]">
             <span>{item.exchange}</span>
             <span>{item.segment.replace("NFO-", "")}</span>
