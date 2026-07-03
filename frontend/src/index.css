@@ -18,6 +18,11 @@ body {
   min-height: 100vh;
 }
 
+/* Hide the TradingView attribution logo injected by lightweight-charts */
+.tv-lightweight-charts a[href*="tradingview"] {
+  display: none !important;
+}
+
 * {
   box-sizing: border-box;
 }
