@@ -166,6 +166,18 @@ export interface Order {
   timestamp?: string;
 }
 
+export interface Holding {
+  tradingsymbol: string;
+  exchange: string;
+  quantity: number;
+  average_price: number;
+  last_price: number;
+  close_price: number;
+  pnl: number;
+  day_change: number;
+  day_change_percentage: number;
+}
+
 export interface OptionChainRow {
   strike: number;
   ceInstrument: Instrument | null;

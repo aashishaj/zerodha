@@ -548,6 +548,14 @@ class ZerodhaFrontendAPI:
             "orders": orders,
         }
 
+    def get_holdings(self) -> dict[str, Any]:
+        kite = self._get_kite()
+        holdings = kite.holdings()
+        return {
+            "ok": True,
+            "holdings": holdings,
+        }
+
     # ── Auth helpers ─────────────────────────────────────────────────────────
 
     def get_auth_status(self) -> dict[str, Any]:
@@ -866,6 +874,9 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     return
                 if parsed.path == "/api/orders/list":
                     self._send_json(api.get_orders())
+                    return
+                if parsed.path == "/api/holdings":
+                    self._send_json(api.get_holdings())
                     return
                 if parsed.path == "/api/watchlist":
                     self._send_json(api.load_watchlist())

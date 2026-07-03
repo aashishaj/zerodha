@@ -6,6 +6,7 @@ import { marketDepthService } from "../services/marketDepthService";
 import { watchlistService } from "../services/watchlistService";
 import { optionChainService } from "../services/optionChainService";
 import { orderService } from "../services/orderService";
+import { holdingsService } from "../services/holdingsService";
 import { parseChartDate } from "../utils/dates";
 import { formatInstrumentLabel } from "../utils/format";
 import type {
@@ -18,6 +19,7 @@ import type {
   MainTab,
   MarketDepth,
   OptionChainRow,
+  Holding,
   Order,
   OrderSide,
   OrderTicketPrefill,
@@ -133,6 +135,8 @@ interface TradingState {
     trigger_price?: number;
   }) => Promise<{ order_id: string }>;
   fetchOrders: () => Promise<void>;
+  holdings: Holding[];
+  fetchHoldings: () => Promise<void>;
 }
 
 const toWatchlistItem = (instrument: Instrument, quote?: Quote): WatchlistItem => ({
@@ -191,6 +195,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   availableCash: null,
   optionChainRows: [],
   orders: [],
+  holdings: [],
   selectedUnderlying: "NIFTY",
   selectedExpiry: "",
   activeOrderTicketInstrument: null,
@@ -502,6 +507,16 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       }
     } catch (err) {
       console.error("Failed to fetch orders:", err);
+    }
+  },
+  async fetchHoldings() {
+    try {
+      const result = await holdingsService.getHoldings();
+      if (result.ok) {
+        set({ holdings: result.holdings });
+      }
+    } catch (err) {
+      console.error("Failed to fetch holdings:", err);
     }
   },
   setLayout(layout) {

@@ -1,31 +1,19 @@
+import { useEffect } from "react";
 import { Briefcase, BarChart3, ChevronDown } from "lucide-react";
 import { formatPrice, formatPercent } from "../../utils/format";
-
-interface DummyHolding {
-  instrument: string;
-  qty: number;
-  avgCost: number;
-  ltp: number;
-  dayChangePct: number;
-}
-
-// Dummy data for previewing the populated state. Empty this array to fall back
-// to the placeholder empty state.
-const DUMMY_HOLDINGS: DummyHolding[] = [
-  { instrument: "RELIANCE", qty: 10, avgCost: 2780.0, ltp: 2945.5, dayChangePct: 1.24 },
-  { instrument: "TCS", qty: 5, avgCost: 3950.0, ltp: 3870.0, dayChangePct: -0.62 },
-  { instrument: "HDFCBANK", qty: 15, avgCost: 1540.0, ltp: 1620.0, dayChangePct: 0.88 },
-  { instrument: "INFY", qty: 20, avgCost: 1600.0, ltp: 1545.8, dayChangePct: -1.05 },
-  { instrument: "ITC", qty: 50, avgCost: 412.0, ltp: 438.6, dayChangePct: 0.41 },
-];
+import { useTradingStore } from "../../store/useTradingStore";
 
 const pnlColor = (value: number) => (value >= 0 ? "#16a34a" : "#dc2626");
 
 export function HoldingsTab() {
-  const holdings = DUMMY_HOLDINGS;
+  const { holdings, fetchHoldings } = useTradingStore();
 
-  const totalInvested = holdings.reduce((sum, h) => sum + h.avgCost * h.qty, 0);
-  const currentValue = holdings.reduce((sum, h) => sum + h.ltp * h.qty, 0);
+  useEffect(() => {
+    void fetchHoldings();
+  }, [fetchHoldings]);
+
+  const totalInvested = holdings.reduce((sum, h) => sum + h.average_price * h.quantity, 0);
+  const currentValue = holdings.reduce((sum, h) => sum + h.last_price * h.quantity, 0);
   const totalPnl = currentValue - totalInvested;
   const totalPnlPct = totalInvested ? (totalPnl / totalInvested) * 100 : 0;
 
@@ -39,7 +27,7 @@ export function HoldingsTab() {
         </button>
       </div>
 
-      {/* Heading row: "Holdings" with an "All equity" dropdown to its right. */}
+      {/* Heading row */}
       <div className="flex items-center justify-between px-6 py-5">
         <h1 className="text-[22px] font-medium text-[#444]">
           Holdings {holdings.length > 0 && <span className="text-[#9aa3af]">({holdings.length})</span>}
@@ -52,7 +40,7 @@ export function HoldingsTab() {
 
       {holdings.length > 0 ? (
         <div className="flex-1 overflow-auto px-6 pb-6">
-          {/* Summary cards. */}
+          {/* Summary cards */}
           <div className="mb-5 flex gap-10 border-y border-[#e8edf3] py-4">
             <div>
               <div className="text-[12px] text-[#9aa3af]">Total investment</div>
@@ -84,22 +72,22 @@ export function HoldingsTab() {
             </thead>
             <tbody>
               {holdings.map((h, i) => {
-                const curVal = h.ltp * h.qty;
-                const invested = h.avgCost * h.qty;
+                const curVal = h.last_price * h.quantity;
+                const invested = h.average_price * h.quantity;
                 const pnl = curVal - invested;
                 const pnlPct = invested ? (pnl / invested) * 100 : 0;
                 return (
                   <tr key={i} className="border-b border-[#f0f2f5] hover:bg-[#f7f8fa]">
-                    <td className="px-3 py-2.5 text-[12px] font-medium text-[#222]">{h.instrument}</td>
-                    <td className="px-3 py-2.5 text-right text-[12px] text-[#222]">{h.qty}</td>
-                    <td className="px-3 py-2.5 text-right text-[12px] text-[#222]">{formatPrice(h.avgCost)}</td>
-                    <td className="px-3 py-2.5 text-right text-[12px] text-[#222]">{formatPrice(h.ltp)}</td>
+                    <td className="px-3 py-2.5 text-[12px] font-medium text-[#222]">{h.tradingsymbol}</td>
+                    <td className="px-3 py-2.5 text-right text-[12px] text-[#222]">{h.quantity}</td>
+                    <td className="px-3 py-2.5 text-right text-[12px] text-[#222]">{formatPrice(h.average_price)}</td>
+                    <td className="px-3 py-2.5 text-right text-[12px] text-[#222]">{formatPrice(h.last_price)}</td>
                     <td className="px-3 py-2.5 text-right text-[12px] text-[#222]">{formatPrice(curVal)}</td>
                     <td className="px-3 py-2.5 text-right text-[12px] font-medium" style={{ color: pnlColor(pnl) }}>
                       {formatPrice(pnl)} ({formatPercent(pnlPct)})
                     </td>
-                    <td className="px-3 py-2.5 text-right text-[12px] font-medium" style={{ color: pnlColor(h.dayChangePct) }}>
-                      {formatPercent(h.dayChangePct)}
+                    <td className="px-3 py-2.5 text-right text-[12px] font-medium" style={{ color: pnlColor(h.day_change_percentage) }}>
+                      {formatPercent(h.day_change_percentage)}
                     </td>
                   </tr>
                 );
@@ -108,7 +96,6 @@ export function HoldingsTab() {
           </table>
         </div>
       ) : (
-        /* Centered empty state. */
         <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
           <Briefcase className="h-16 w-16 text-[#d4dae3]" strokeWidth={1.25} />
           <p className="mt-6 max-w-md text-[15px] leading-6 text-[#444]">
