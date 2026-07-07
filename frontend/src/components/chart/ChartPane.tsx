@@ -113,6 +113,11 @@ export const ChartPane = memo(function ChartPane({
   const isOrderTicketOpenRef = useRef(isOrderTicketOpen);
   isOrderTicketOpenRef.current = isOrderTicketOpen;
 
+  // Stable ref to the role-allowed sides so handleCandleClick can bypass the
+  // picker for single-side (buyer/seller) users without being recreated.
+  const sidesRef = useRef({ canBuy, canSell });
+  sidesRef.current = { canBuy, canSell };
+
   // Live tick stream — open an SSE connection per instrument for real-time price updates
   useEffect(() => {
     if (!instrument) return;
@@ -172,44 +177,12 @@ export const ChartPane = memo(function ChartPane({
   const instrumentRef = useRef(instrument);
   instrumentRef.current = instrument;
 
-  // Candle click → show the B/S side picker bubble at the click position.
-  // Guard against two cases:
-  //   1. justDismissedRef: the chart's `click` event fires on the same mousedown
-  //      that dismissed the picker — without the guard, the picker would instantly
-  //      re-appear.
-  //   2. isOrderTicketOpenRef: don't open the picker while the order ticket is
-  //      already visible.
-  const handleCandleClick = useCallback((candle: Candle, point: { x: number; y: number }) => {
-    if (justDismissedRef.current || isOrderTicketOpenRef.current) return;
-    if (!instrumentRef.current) return;
-    setSidePicker({ candle, x: point.x, y: point.y });
-  }, []); // all reads go through stable refs — no deps needed
-
-  // Dismiss picker on any click outside the bubble.
-  // Sets justDismissedRef for ~200 ms so the chart's subsequent `click` event
-  // (same user interaction) cannot immediately re-open the picker.
-  useEffect(() => {
-    if (!sidePicker) return;
-    const dismiss = () => {
-      justDismissedRef.current = true;
-      setSidePicker(null);
-      window.setTimeout(() => { justDismissedRef.current = false; }, 200);
-    };
-    const timer = window.setTimeout(() => window.addEventListener("mousedown", dismiss), 0);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener("mousedown", dismiss);
-    };
-  }, [sidePicker]);
-
-  // Called when user picks a side from the bubble.
-  // Defaults to SL order type with price/trigger pre-filled from candle H/L
-  // using the configurable offsets stored in slSettings.
-  const handlePickSide = (side: "BUY" | "SELL") => {
-    if (!sidePicker) return;
+  // Open the order ticket for a side, defaulting to an SL order with
+  // price/trigger pre-filled from the clicked candle's H/L using the
+  // configurable offsets stored in slSettings.
+  const openTicketForCandle = useCallback((side: "BUY" | "SELL", candle: Candle) => {
     const instr = instrumentRef.current;
     if (!instr) return;
-    const { candle } = sidePicker;
     const { buyTriggerOffset, buyPriceOffset, sellTriggerOffset, sellPriceOffset } =
       slSettingsRef.current;
     const tickSize = instr.tick_size || 0.05;
@@ -232,6 +205,49 @@ export const ChartPane = memo(function ChartPane({
         : round(baseLow  - sellPriceOffset);
 
     openOrderTicket(instr, side, { orderType: "SL", price, triggerPrice });
+  }, [openOrderTicket]);
+
+  // Candle click → show the B/S side picker bubble at the click position, or —
+  // when the user's role allows exactly one side (buyer/seller) — skip the
+  // bubble and open the order ticket for that side directly.
+  // Guard against two cases:
+  //   1. justDismissedRef: the chart's `click` event fires on the same mousedown
+  //      that dismissed the picker — without the guard, the picker would instantly
+  //      re-appear.
+  //   2. isOrderTicketOpenRef: don't open the picker while the order ticket is
+  //      already visible.
+  const handleCandleClick = useCallback((candle: Candle, point: { x: number; y: number }) => {
+    if (justDismissedRef.current || isOrderTicketOpenRef.current) return;
+    if (!instrumentRef.current) return;
+    const { canBuy, canSell } = sidesRef.current;
+    if (canBuy !== canSell) {
+      openTicketForCandle(canBuy ? "BUY" : "SELL", candle);
+      return;
+    }
+    setSidePicker({ candle, x: point.x, y: point.y });
+  }, [openTicketForCandle]); // other reads go through stable refs
+
+  // Dismiss picker on any click outside the bubble.
+  // Sets justDismissedRef for ~200 ms so the chart's subsequent `click` event
+  // (same user interaction) cannot immediately re-open the picker.
+  useEffect(() => {
+    if (!sidePicker) return;
+    const dismiss = () => {
+      justDismissedRef.current = true;
+      setSidePicker(null);
+      window.setTimeout(() => { justDismissedRef.current = false; }, 200);
+    };
+    const timer = window.setTimeout(() => window.addEventListener("mousedown", dismiss), 0);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("mousedown", dismiss);
+    };
+  }, [sidePicker]);
+
+  // Called when user picks a side from the bubble.
+  const handlePickSide = (side: "BUY" | "SELL") => {
+    if (!sidePicker) return;
+    openTicketForCandle(side, sidePicker.candle);
     setSidePicker(null);
   };
 
