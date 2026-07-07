@@ -55,6 +55,43 @@ class AccountStoreTests(unittest.TestCase):
         self.store.delete_account(a1)
         self.assertIsNone(self.store.get_account(a1))
 
+    def test_set_credentials_roundtrip(self):
+        a1 = self.store.upsert_account("MKQ150", label="A")
+        account = self.store.get_account(a1)
+        self.assertIsNone(account["api_key"])
+        self.assertTrue(self.store.set_credentials(a1, "key1", "secret1"))
+        account = self.store.get_account(a1)
+        self.assertEqual(account["api_key"], "key1")
+        self.assertEqual(account["api_secret"], "secret1")
+
+    def test_set_credentials_validates_input(self):
+        a1 = self.store.upsert_account("MKQ150", label="A")
+        with self.assertRaises(ValueError):
+            self.store.set_credentials(a1, "", "secret")
+        with self.assertRaises(ValueError):
+            self.store.set_credentials(a1, "key", "  ")
+        self.assertFalse(self.store.set_credentials(999, "key", "secret"))
+
+    def test_upsert_with_credentials_creates_and_refreshes(self):
+        a1 = self.store.upsert_account("MKQ150", label="A", api_key="k1", api_secret="s1")
+        self.assertEqual(self.store.get_account(a1)["api_key"], "k1")
+        # Re-connecting with a new key pair refreshes the stored credentials.
+        again = self.store.upsert_account("MKQ150", api_key="k2", api_secret="s2")
+        self.assertEqual(again, a1)
+        account = self.store.get_account(a1)
+        self.assertEqual(account["api_key"], "k2")
+        self.assertEqual(account["api_secret"], "s2")
+        # Upsert without credentials leaves the stored pair untouched.
+        self.store.upsert_account("MKQ150")
+        self.assertEqual(self.store.get_account(a1)["api_key"], "k2")
+
+    def test_get_account_by_api_key(self):
+        a1 = self.store.upsert_account("MKQ150", label="A", api_key="k1", api_secret="s1")
+        found = self.store.get_account_by_api_key("k1")
+        self.assertIsNotNone(found)
+        self.assertEqual(found["id"], a1)
+        self.assertIsNone(self.store.get_account_by_api_key("nope"))
+
 
 class PerAccountTokenTests(unittest.TestCase):
     def setUp(self):
@@ -176,6 +213,75 @@ class AccountAssignmentsViewTests(unittest.TestCase):
         self.api.assign_account(acc, uid)
         self.api.delete_user(uid)
         self.assertEqual(self.api.account_store().assigned_user_ids(acc), [])
+
+
+class CredentialFlowTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        settings = Settings(
+            api_key="global-key",
+            api_secret="global-secret",
+            token_cache_path=Path(self._tmp.name) / "tokens.json",
+            watchlist_path=Path(self._tmp.name) / "watchlist.json",
+            app_db_path=Path(self._tmp.name) / "app.db",
+        )
+        self.api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_start_account_connect_parks_credentials_in_login_url(self):
+        url = self.api.start_account_connect("Dad", "acct-key", "acct-secret")
+        self.assertIn("api_key=acct-key", url)
+        self.assertIn("redirect_params=connect_nonce%3D", url)
+        self.assertEqual(len(self.api._pending_connects), 1)
+        pending = next(iter(self.api._pending_connects.values()))
+        self.assertEqual(pending["api_key"], "acct-key")
+        self.assertEqual(pending["label"], "Dad")
+
+    def test_start_account_connect_requires_both_keys(self):
+        with self.assertRaises(ValueError):
+            self.api.start_account_connect("X", "", "secret")
+        with self.assertRaises(ValueError):
+            self.api.start_account_connect("X", "key", "")
+
+    def test_callback_with_expired_nonce_raises(self):
+        with self.assertRaises(ValueError):
+            self.api.handle_oauth_callback("rt", connect_nonce="unknown")
+
+    def test_account_login_url_uses_stored_key_or_falls_back(self):
+        with_creds = self.api.account_store().upsert_account(
+            "MKQ150", label="A", api_key="own-key", api_secret="own-secret"
+        )
+        legacy = self.api.account_store().upsert_account("RK1234", label="B")
+        self.assertIn("api_key=own-key", self.api.account_login_url(with_creds))
+        self.assertIn(f"account_id%3D{with_creds}", self.api.account_login_url(with_creds))
+        self.assertIn("api_key=global-key", self.api.account_login_url(legacy))
+        with self.assertRaises(ValueError):
+            self.api.account_login_url(999)
+
+    def test_update_account_credentials(self):
+        acc = self.api.account_store().upsert_account("MKQ150", label="A")
+        self.api.update_account_credentials(acc, "new-key", "new-secret")
+        account = self.api.account_store().get_account(acc)
+        self.assertEqual(account["api_key"], "new-key")
+        with self.assertRaises(ValueError):
+            self.api.update_account_credentials(999, "k", "s")
+
+    def test_accounts_for_user_exposes_key_to_admin_only(self):
+        self.api.account_store().upsert_account("MKQ150", label="A", api_key="k1", api_secret="s1")
+        buyer_id = self.api.user_store().create_user("b1", "pw", "buyer")
+        self.api.account_store().assign(buyer_id, 1)
+
+        admin_view = self.api.accounts_for_user({"id": 0, "role": "super_admin"})
+        self.assertTrue(admin_view[0]["has_credentials"])
+        self.assertEqual(admin_view[0]["api_key"], "k1")
+        self.assertNotIn("api_secret", admin_view[0])
+
+        buyer_view = self.api.accounts_for_user({"id": buyer_id, "role": "buyer"})
+        self.assertTrue(buyer_view[0]["has_credentials"])
+        self.assertNotIn("api_key", buyer_view[0])
+        self.assertNotIn("api_secret", buyer_view[0])
 
 
 class SessionAccountTests(unittest.TestCase):

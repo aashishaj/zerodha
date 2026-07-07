@@ -221,6 +221,10 @@ export interface AccountSummary {
   label: string;
   zerodha_user_id: string;
   connected: boolean;
+  /** Whether the account has its own Kite app credentials stored. */
+  has_credentials?: boolean;
+  /** Stored Kite API key — only present for super admins. */
+  api_key?: string | null;
 }
 
 export interface ActiveAccount {

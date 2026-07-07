@@ -13,7 +13,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 from zerodha_app.accounts import AccountStore
 from zerodha_app.appauth import UserStore, public_user
@@ -171,6 +171,9 @@ class ZerodhaFrontendAPI:
         self._request_ctx = threading.local()
         self._user_store: UserStore | None = None
         self._account_store: AccountStore | None = None
+        # Credentials for in-flight "add account" OAuth connects, keyed by a
+        # one-time nonce carried through Kite's redirect_params round trip.
+        self._pending_connects: dict[str, dict[str, str]] = {}
 
     def account_store(self) -> AccountStore:
         if self._account_store is None:
@@ -228,21 +231,24 @@ class ZerodhaFrontendAPI:
     def accounts_for_user(self, user: dict[str, Any]) -> list[dict[str, Any]]:
         """Accounts visible to a user, each tagged with today's connection state."""
         store = self.account_store()
-        accounts = (
-            store.list_accounts()
-            if user["role"] == "super_admin"
-            else store.list_accounts_for_user(user["id"])
-        )
+        is_admin = user["role"] == "super_admin"
+        accounts = store.list_accounts() if is_admin else store.list_accounts_for_user(user["id"])
         connected = AuthManager(self.options.settings).connected_account_user_ids()
-        return [
-            {
+        result = []
+        for account in accounts:
+            summary = {
                 "id": account["id"],
                 "label": account["label"],
                 "zerodha_user_id": account["zerodha_user_id"],
                 "connected": account["zerodha_user_id"] in connected,
+                "has_credentials": bool(account["api_key"] and account["api_secret"]),
             }
-            for account in accounts
-        ]
+            if is_admin:
+                # The key is needed to prefill the admin's edit form; the secret
+                # is never sent to the client.
+                summary["api_key"] = account["api_key"]
+            result.append(summary)
+        return result
 
     def select_account(self, token: str, user: dict[str, Any], account_id: int) -> dict[str, Any]:
         """Set the session's active account after validating access + connection."""
@@ -287,6 +293,60 @@ class ZerodhaFrontendAPI:
 
     def unassign_account(self, account_id: int, user_id: int) -> None:
         self.account_store().unassign(user_id, account_id)
+
+    # ── Per-account Kite credentials & connect flow ──────────────────────────
+
+    def start_account_connect(self, label: str, api_key: str, api_secret: str) -> str:
+        """Begin the OAuth connect for a new Kite app; returns the login URL.
+
+        The credentials are parked under a one-time nonce that Kite echoes back
+        via ``redirect_params``, so the callback can exchange the token with the
+        right app secret before any account row exists.
+        """
+        clean_key = api_key.strip()
+        clean_secret = api_secret.strip()
+        if not clean_key or not clean_secret:
+            raise ValueError("Both api_key and api_secret are required.")
+        nonce = uuid.uuid4().hex
+        self._pending_connects[nonce] = {
+            "api_key": clean_key,
+            "api_secret": clean_secret,
+            "label": label.strip(),
+        }
+        return self._build_login_url(clean_key, f"connect_nonce={nonce}")
+
+    def account_login_url(self, account_id: int) -> str:
+        """Login URL to (re)connect an existing account using its stored keys."""
+        account = self.account_store().get_account(account_id)
+        if account is None:
+            raise ValueError("Account not found.")
+        # Legacy accounts connected through the global .env app have no stored key.
+        api_key = account["api_key"] or self.options.settings.api_key
+        return self._build_login_url(api_key, f"account_id={account_id}")
+
+    def update_account_credentials(self, account_id: int, api_key: str, api_secret: str) -> None:
+        if not self.account_store().set_credentials(account_id, api_key, api_secret):
+            raise ValueError("Account not found.")
+        # Drop cached clients so the next request rebuilds with the new key.
+        account = self.account_store().get_account(account_id)
+        if account is not None:
+            self._kite_by_account.pop(account["zerodha_user_id"], None)
+            self._broadcaster_by_account.pop(account["zerodha_user_id"], None)
+
+    def _account_api_key(self, account_user_id: str | None) -> str:
+        if account_user_id:
+            account = self.account_store().get_account_by_user_id(account_user_id)
+            if account is not None and account["api_key"]:
+                return account["api_key"]
+        return self.options.settings.api_key
+
+    @staticmethod
+    def _build_login_url(api_key: str, redirect_params: str) -> str:
+        return (
+            "https://kite.zerodha.com/connect/login?v=3"
+            f"&api_key={quote_plus(api_key)}"
+            f"&redirect_params={quote_plus(redirect_params)}"
+        )
 
     # ── Editing existing users (super-admin targets are protected) ───────────
 
@@ -569,12 +629,43 @@ class ZerodhaFrontendAPI:
         kite = KiteConnect(api_key=self.options.settings.api_key)
         return {"loginUrl": kite.login_url()}
 
-    def handle_oauth_callback(self, request_token: str) -> None:
-        """Exchange request_token, cache the per-account token, and upsert the account."""
-        auth = AuthManager(self.options.settings)
+    def handle_oauth_callback(
+        self,
+        request_token: str,
+        *,
+        connect_nonce: str | None = None,
+        account_id: int | None = None,
+    ) -> None:
+        """Exchange request_token, cache the per-account token, and upsert the account.
+
+        ``connect_nonce`` identifies an in-flight "add account" flow carrying
+        fresh credentials; ``account_id`` a reconnect of an existing account
+        using its stored credentials. With neither, the global .env app is used.
+        """
+        api_key: str | None = None
+        api_secret: str | None = None
+        label: str | None = None
+        if connect_nonce is not None:
+            pending = self._pending_connects.pop(connect_nonce, None)
+            if pending is None:
+                raise ValueError("Connection request expired. Start the connect again.")
+            api_key, api_secret = pending["api_key"], pending["api_secret"]
+            label = pending["label"] or None
+        elif account_id is not None:
+            account = self.account_store().get_account(account_id)
+            if account is None:
+                raise ValueError("Account not found.")
+            api_key, api_secret = account["api_key"], account["api_secret"]
+
+        auth = AuthManager(self.options.settings, api_key=api_key, api_secret=api_secret)
         _, user_id, user_name = auth.create_session_detailed(request_token)
         if user_id:
-            self.account_store().upsert_account(user_id, label=user_name or user_id)
+            self.account_store().upsert_account(
+                user_id,
+                label=label or user_name or user_id,
+                api_key=api_key,
+                api_secret=api_secret,
+            )
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -596,7 +687,7 @@ class ZerodhaFrontendAPI:
             if broadcaster is None:
                 kite = self._get_kite()
                 broadcaster = TickBroadcaster(
-                    api_key=self.options.settings.api_key,
+                    api_key=self._account_api_key(account_user_id),
                     access_token=kite.access_token,
                 )
                 self._broadcaster_by_account[account_user_id] = broadcaster
@@ -622,7 +713,7 @@ class ZerodhaFrontendAPI:
             # (re)connected via the OAuth flow.
             raise RuntimeError("This account is not connected. Ask an admin to reconnect it.")
         access_token = cached
-        kite = KiteConnect(api_key=self.options.settings.api_key)
+        kite = KiteConnect(api_key=self._account_api_key(account_user_id))
         kite.set_access_token(access_token)
         self._kite_by_account[account_user_id] = (kite, access_token)
         # Drop any broadcaster bound to the old token so it rebinds on next use.
@@ -757,8 +848,15 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     if not request_token:
                         self._send_redirect(f"{FRONTEND_URL}?auth=error")
                         return
+                    connect_nonce = params.get("connect_nonce", [""])[0].strip() or None
+                    account_id_text = params.get("account_id", [""])[0].strip()
+                    callback_account_id = int(account_id_text) if account_id_text.isdigit() else None
                     try:
-                        api.handle_oauth_callback(request_token)
+                        api.handle_oauth_callback(
+                            request_token,
+                            connect_nonce=connect_nonce,
+                            account_id=callback_account_id,
+                        )
                         self._send_redirect(f"{FRONTEND_URL}?auth=success")
                     except Exception as exc:
                         LOGGER.exception("OAuth callback failed")
@@ -811,6 +909,20 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                         self.send_error(404, "Not found")
                         return
                     self._send_json({"ok": True, "users": api.account_assignments(int(account_id_text))})
+                    return
+                if parsed.path.startswith("/api/accounts/") and parsed.path.endswith("/login-url"):
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    account_id_text = parsed.path.split("/")[3]
+                    if not account_id_text.isdigit():
+                        self.send_error(404, "Not found")
+                        return
+                    try:
+                        login_url = api.account_login_url(int(account_id_text))
+                    except ValueError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=400)
+                        return
+                    self._send_json({"ok": True, "loginUrl": login_url})
                     return
                 if parsed.path.startswith("/api/app/users/") and parsed.path.endswith("/accounts"):
                     if not self._require_role(user, "super_admin"):
@@ -973,6 +1085,40 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                         str(body.get("role") or ""),
                     )
                     self._send_json({"ok": True, "user": created})
+                    return
+                if parsed.path == "/api/accounts/connect-init":
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    body = self._read_json()
+                    try:
+                        login_url = api.start_account_connect(
+                            str(body.get("label") or ""),
+                            str(body.get("apiKey") or ""),
+                            str(body.get("apiSecret") or ""),
+                        )
+                    except ValueError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=400)
+                        return
+                    self._send_json({"ok": True, "loginUrl": login_url})
+                    return
+                if parsed.path.startswith("/api/accounts/") and parsed.path.endswith("/credentials"):
+                    if not self._require_role(user, "super_admin"):
+                        return
+                    account_id_text = parsed.path.split("/")[3]
+                    if not account_id_text.isdigit():
+                        self.send_error(404, "Not found")
+                        return
+                    body = self._read_json()
+                    try:
+                        api.update_account_credentials(
+                            int(account_id_text),
+                            str(body.get("apiKey") or ""),
+                            str(body.get("apiSecret") or ""),
+                        )
+                    except ValueError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=400)
+                        return
+                    self._send_json({"ok": True})
                     return
                 if parsed.path == "/api/accounts/assign":
                     if not self._require_role(user, "super_admin"):

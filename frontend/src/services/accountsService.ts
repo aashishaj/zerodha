@@ -16,10 +16,21 @@ export const accountsService = {
     await apiClient.post("/session/select-account", { accountId });
   },
 
-  /** Super-admin: get the Zerodha OAuth URL to connect (or re-connect) an account. */
-  async connectUrl(): Promise<string> {
-    const resp = await apiClient.get("/auth/login-url");
+  /** Super-admin: start connecting a new account with its own Kite app keys. */
+  async connectInit(label: string, apiKey: string, apiSecret: string): Promise<string> {
+    const resp = await apiClient.post("/accounts/connect-init", { label, apiKey, apiSecret });
     return resp.data.loginUrl as string;
+  },
+
+  /** Super-admin: OAuth URL to reconnect an existing account using its stored keys. */
+  async accountLoginUrl(accountId: number): Promise<string> {
+    const resp = await apiClient.get(`/accounts/${accountId}/login-url`);
+    return resp.data.loginUrl as string;
+  },
+
+  /** Super-admin: store or replace an account's Kite app credentials. */
+  async setCredentials(accountId: number, apiKey: string, apiSecret: string): Promise<void> {
+    await apiClient.post(`/accounts/${accountId}/credentials`, { apiKey, apiSecret });
   },
 
   // ── Super-admin: user + assignment management ──

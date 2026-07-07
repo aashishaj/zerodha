@@ -62,6 +62,12 @@ class AccountStore:
                 )
                 """
             )
+            # Migration: per-account Kite Connect app credentials.
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(accounts)")}
+            if "api_key" not in columns:
+                connection.execute("ALTER TABLE accounts ADD COLUMN api_key TEXT")
+            if "api_secret" not in columns:
+                connection.execute("ALTER TABLE accounts ADD COLUMN api_secret TEXT")
 
     @staticmethod
     def _row_to_account(row: sqlite3.Row) -> dict[str, Any]:
@@ -71,28 +77,60 @@ class AccountStore:
             "zerodha_user_id": row["zerodha_user_id"],
             "active": bool(row["active"]),
             "created_at": row["created_at"],
+            "api_key": row["api_key"],
+            "api_secret": row["api_secret"],
         }
 
     # ── Accounts ─────────────────────────────────────────────────────────────
-    def upsert_account(self, zerodha_user_id: str, label: str | None = None) -> int:
+    def upsert_account(
+        self,
+        zerodha_user_id: str,
+        label: str | None = None,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+    ) -> int:
         """Create the account for a Zerodha user id, or return the existing id.
 
         A label is only set on creation; existing labels are preserved so a
-        re-connect never overwrites an admin-chosen name.
+        re-connect never overwrites an admin-chosen name. Credentials, when
+        provided, are stored on creation and refreshed on existing accounts so
+        a connect via a new Kite app updates the stored key pair.
         """
         user_id = zerodha_user_id.strip()
         if not user_id:
             raise ValueError("zerodha_user_id must not be empty.")
         existing = self.get_account_by_user_id(user_id)
         if existing is not None:
+            if api_key and api_secret:
+                self.set_credentials(existing["id"], api_key, api_secret)
             return existing["id"]
         with self._connect() as connection:
             cursor = connection.execute(
-                "INSERT INTO accounts (label, zerodha_user_id, active, created_at) "
-                "VALUES (?, ?, 1, ?)",
-                (label or user_id, user_id, _utcnow_iso()),
+                "INSERT INTO accounts (label, zerodha_user_id, active, created_at, api_key, api_secret) "
+                "VALUES (?, ?, 1, ?, ?, ?)",
+                (label or user_id, user_id, _utcnow_iso(), api_key, api_secret),
             )
             return int(cursor.lastrowid or 0)
+
+    def set_credentials(self, account_id: int, api_key: str, api_secret: str) -> bool:
+        """Store or replace the Kite Connect app credentials for an account."""
+        clean_key = api_key.strip()
+        clean_secret = api_secret.strip()
+        if not clean_key or not clean_secret:
+            raise ValueError("Both api_key and api_secret must be provided.")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "UPDATE accounts SET api_key = ?, api_secret = ? WHERE id = ?",
+                (clean_key, clean_secret, account_id),
+            )
+        return cursor.rowcount > 0
+
+    def get_account_by_api_key(self, api_key: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM accounts WHERE api_key = ?", (api_key.strip(),)
+            ).fetchone()
+        return self._row_to_account(row) if row is not None else None
 
     def get_account(self, account_id: int) -> dict[str, Any] | None:
         with self._connect() as connection:

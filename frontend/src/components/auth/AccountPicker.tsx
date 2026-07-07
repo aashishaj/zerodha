@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LogOut, Plus, ShieldCheck, Trash2 } from "lucide-react";
+import { KeyRound, LogOut, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useAuthStore } from "../../store/useAuthStore";
 import { accountsService } from "../../services/accountsService";
 import type { AccountSummary, AppRole, AppUser } from "../../types";
@@ -20,6 +20,8 @@ export function AccountPicker() {
   const isAdmin = user?.role === "super_admin";
   const [error, setError] = useState<string | null>(null);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [credsAccount, setCredsAccount] = useState<AccountSummary | null>(null);
 
   // On mount: clean up any ?auth= redirect param, then load accounts.
   useEffect(() => {
@@ -32,10 +34,10 @@ export function AccountPicker() {
     void loadAccounts();
   }, [loadAccounts]);
 
-  const handleConnect = async () => {
+  const handleConnect = async (accountId: number) => {
     setError(null);
     try {
-      const url = await accountsService.connectUrl();
+      const url = await accountsService.accountLoginUrl(accountId);
       window.location.href = url;
     } catch {
       setError("Could not start the Zerodha connection.");
@@ -119,7 +121,7 @@ export function AccountPicker() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        void handleConnect();
+                        void handleConnect(account.id);
                       }}
                       className="mt-2 rounded-lg bg-[#e5382f] px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-[#c9302a]"
                     >
@@ -130,15 +132,29 @@ export function AccountPicker() {
                       Not connected
                     </div>
                   )}
+                  {isAdmin && !account.has_credentials && (
+                    <div className="mt-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                      API keys missing
+                    </div>
+                  )}
                 </div>
                 {isAdmin && (
-                  <button
-                    onClick={() => void handleDeleteAccount(account)}
-                    title="Remove account"
-                    className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-400 shadow-sm transition hover:bg-red-50 hover:text-red-500"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                  <>
+                    <button
+                      onClick={() => void handleDeleteAccount(account)}
+                      title="Remove account"
+                      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-400 shadow-sm transition hover:bg-red-50 hover:text-red-500"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setCredsAccount(account)}
+                      title="API keys"
+                      className="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-400 shadow-sm transition hover:bg-blue-50 hover:text-blue-600"
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                    </button>
+                  </>
                 )}
               </div>
             ))}
@@ -148,10 +164,10 @@ export function AccountPicker() {
         {isAdmin && (
           <div className="mt-8 flex items-center justify-center gap-3">
             <button
-              onClick={() => void handleConnect()}
+              onClick={() => setShowAddForm((v) => !v)}
               className="flex items-center gap-2 rounded-lg bg-[#e5382f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#c9302a]"
             >
-              <Plus className="h-4 w-4" /> Connect account
+              <Plus className="h-4 w-4" /> Add account
             </button>
             <button
               onClick={() => setShowAdmin((v) => !v)}
@@ -162,6 +178,21 @@ export function AccountPicker() {
           </div>
         )}
 
+        {isAdmin && showAddForm && (
+          <AddAccountForm onError={setError} onClose={() => setShowAddForm(false)} />
+        )}
+
+        {isAdmin && credsAccount && (
+          <CredentialsEditor
+            account={credsAccount}
+            onClose={() => setCredsAccount(null)}
+            onSaved={() => {
+              setCredsAccount(null);
+              void loadAccounts();
+            }}
+          />
+        )}
+
         {isAdmin && showAdmin && <AdminPanel />}
 
         <div className="mt-10 text-center">
@@ -170,6 +201,116 @@ export function AccountPicker() {
             className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600"
           >
             <LogOut className="h-3.5 w-3.5" /> Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Super-admin: add a new Zerodha account by entering its Kite app credentials. */
+function AddAccountForm({ onError, onClose }: { onError: (msg: string | null) => void; onClose: () => void }) {
+  const [label, setLabel] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [apiSecret, setApiSecret] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const field =
+    "h-9 w-full rounded-lg border border-slate-300 px-3 text-sm focus:border-blue-500 focus:outline-none";
+
+  const handleSubmit = async () => {
+    onError(null);
+    setBusy(true);
+    try {
+      const url = await accountsService.connectInit(label, apiKey, apiSecret);
+      window.location.href = url;
+    } catch {
+      onError("Could not start the connection. Check the API key and secret.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
+      <h3 className="mb-1 text-sm font-semibold text-slate-800">Add Zerodha account</h3>
+      <p className="mb-4 text-[11px] text-slate-400">
+        Enter the account's Kite Connect app credentials (from developers.kite.trade). You'll be
+        redirected to Zerodha to log in with that account. Keys are stored — you won't enter them again.
+      </p>
+      <div className="max-w-sm space-y-2">
+        <input className={field} placeholder="Label (optional, e.g. Dad's account)" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <input className={field} placeholder="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+        <input className={field} type="password" placeholder="API secret" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} />
+        <div className="flex gap-2">
+          <button
+            disabled={!apiKey || !apiSecret || busy}
+            onClick={() => void handleSubmit()}
+            className="h-9 flex-1 rounded-lg bg-[#e5382f] text-sm font-semibold text-white transition hover:bg-[#c9302a] disabled:opacity-50"
+          >
+            {busy ? "Redirecting…" : "Connect with Zerodha"}
+          </button>
+          <button onClick={onClose} className="h-9 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Super-admin: view/update the stored Kite app credentials of one account. */
+function CredentialsEditor({
+  account,
+  onClose,
+  onSaved,
+}: {
+  account: AccountSummary;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [apiKey, setApiKey] = useState(account.api_key ?? "");
+  const [apiSecret, setApiSecret] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const field =
+    "h-9 w-full rounded-lg border border-slate-300 px-3 text-sm focus:border-blue-500 focus:outline-none";
+
+  const handleSave = async () => {
+    setMsg(null);
+    setBusy(true);
+    try {
+      await accountsService.setCredentials(account.id, apiKey, apiSecret);
+      onSaved();
+    } catch {
+      setMsg("Could not save the credentials.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-6 rounded-2xl border border-blue-200 bg-blue-50/40 p-6">
+      <h3 className="mb-1 text-sm font-semibold text-slate-800">
+        API keys — {account.label} ({account.zerodha_user_id})
+      </h3>
+      <p className="mb-4 text-[11px] text-slate-400">
+        Update these when the account's Kite app key or secret changes. The secret is never shown;
+        entering a new pair replaces the old one.
+      </p>
+      {msg && <div className="mb-3 rounded-md bg-white px-3 py-1.5 text-xs text-red-600">{msg}</div>}
+      <div className="max-w-sm space-y-2">
+        <input className={field} placeholder="API key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+        <input className={field} type="password" placeholder="API secret" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} />
+        <div className="flex gap-2">
+          <button
+            disabled={!apiKey || !apiSecret || busy}
+            onClick={() => void handleSave()}
+            className="h-9 flex-1 rounded-lg bg-slate-800 text-sm font-semibold text-white hover:bg-slate-900 disabled:opacity-50"
+          >
+            {busy ? "Saving…" : "Save keys"}
+          </button>
+          <button onClick={onClose} className="h-9 rounded-lg border border-slate-300 px-4 text-sm font-medium text-slate-600 hover:bg-slate-50">
+            Cancel
           </button>
         </div>
       </div>

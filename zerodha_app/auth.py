@@ -17,9 +17,21 @@ _AUTH_FLOW_LOCK = threading.Lock()
 
 
 class AuthManager:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        api_key: str | None = None,
+        api_secret: str | None = None,
+    ) -> None:
+        """Manage Kite sessions.
+
+        ``api_key``/``api_secret`` override the global settings pair so token
+        exchange can run against a specific account's Kite Connect app.
+        """
         self.settings = settings
-        self.kite = KiteConnect(api_key=settings.api_key)
+        self._api_secret = api_secret or settings.api_secret
+        self.kite = KiteConnect(api_key=api_key or settings.api_key)
 
     def get_access_token(self, *, auto_login: bool = False) -> str:
         token = self.get_cached_access_token()
@@ -118,7 +130,7 @@ class AuthManager:
         """
         session = self.kite.generate_session(
             request_token=request_token,
-            api_secret=self.settings.api_secret,
+            api_secret=self._api_secret,
         )
         access_token = str(session["access_token"])
         user_id = str(session.get("user_id") or "")
