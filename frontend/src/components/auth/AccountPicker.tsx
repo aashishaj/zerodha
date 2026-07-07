@@ -167,7 +167,7 @@ export function AccountPicker() {
               onClick={() => setShowAddForm((v) => !v)}
               className="flex items-center gap-2 rounded-lg bg-[#e5382f] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#c9302a]"
             >
-              <Plus className="h-4 w-4" /> Add account
+              <Plus className="h-4 w-4" /> Connect account
             </button>
             <button
               onClick={() => setShowAdmin((v) => !v)}
@@ -232,10 +232,11 @@ function AddAccountForm({ onError, onClose }: { onError: (msg: string | null) =>
 
   return (
     <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6">
-      <h3 className="mb-1 text-sm font-semibold text-slate-800">Add Zerodha account</h3>
+      <h3 className="mb-1 text-sm font-semibold text-slate-800">Connect a Zerodha account</h3>
       <p className="mb-4 text-[11px] text-slate-400">
-        Enter the account's Kite Connect app credentials (from developers.kite.trade). You'll be
-        redirected to Zerodha to log in with that account. Keys are stored — you won't enter them again.
+        One-time setup: enter the API key &amp; secret from that account's Kite app
+        (developers.kite.trade), then log in at Zerodha to link it. The keys are saved — from
+        tomorrow, reconnecting is a single click.
       </p>
       <div className="max-w-sm space-y-2">
         <input className={field} placeholder="Label (optional, e.g. Dad's account)" value={label} onChange={(e) => setLabel(e.target.value)} />
