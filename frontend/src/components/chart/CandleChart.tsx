@@ -460,7 +460,9 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       liveBarRef.current = null;
       chart.remove();
     };
-  }, [lineColor, normalized.chartData.length]);
+    // Note: data changes must NOT recreate the chart — the data-sync effect
+    // below handles them incrementally while preserving the user's pan/zoom.
+  }, [lineColor]);
 
   // Sync indicator line series with the instance list.
   // - create series for new instances, remove series for deleted ones
