@@ -13,6 +13,7 @@ from zerodha_app.api_server import (
     _quote_key_for_instrument,
     _resample_rows_by_minutes,
     _resample_rows_by_week,
+    role_allows_side,
 )
 from zerodha_app.config import Settings
 
@@ -243,3 +244,22 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(len(result), 4)
         self.assertEqual(result[0]["date"].isoformat(), "2026-05-20T09:15:00")
         self.assertEqual(sum(item["volume"] for item in result), 60)
+
+
+class RoleAllowsSideTests(unittest.TestCase):
+    def test_buyer_only_buys(self):
+        self.assertTrue(role_allows_side("buyer", "BUY"))
+        self.assertFalse(role_allows_side("buyer", "SELL"))
+
+    def test_seller_only_sells(self):
+        self.assertTrue(role_allows_side("seller", "SELL"))
+        self.assertFalse(role_allows_side("seller", "BUY"))
+
+    def test_trader_and_super_admin_get_both(self):
+        for role in ("trader", "super_admin"):
+            self.assertTrue(role_allows_side(role, "BUY"))
+            self.assertTrue(role_allows_side(role, "SELL"))
+
+    def test_unknown_role_gets_nothing(self):
+        self.assertFalse(role_allows_side("", "BUY"))
+        self.assertFalse(role_allows_side("viewer", "SELL"))

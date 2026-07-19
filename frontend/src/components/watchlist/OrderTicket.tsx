@@ -54,15 +54,14 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   }, [instrument]);
 
   const { canBuy, canSell } = useAllowedSides();
-  // A role may use its own side for any order, plus the opposite side when the
-  // order is a stop-loss (SL/SL-M) — i.e. to place a closing/protective order.
-  const allowedSide = (requested: OrderSide, isSL: boolean): OrderSide => {
-    if (isSL) return requested;
+  // Sides are strictly role-gated: buyers only BUY, sellers only SELL,
+  // traders and super admins both. No exceptions for order type.
+  const allowedSide = (requested: OrderSide): OrderSide => {
     if (requested === "BUY") return canBuy ? "BUY" : "SELL";
     return canSell ? "SELL" : "BUY";
   };
 
-  const [currentSide, setCurrentSide] = useState<OrderSide>(allowedSide(side, false));
+  const [currentSide, setCurrentSide] = useState<OrderSide>(allowedSide(side));
   const [activeTab,   setActiveTab]   = useState<"Quick" | "Regular" | "Iceberg">("Regular");
   const [product,     setProduct]     = useState<ProductType>("MIS");
   const [orderType,   setOrderType]   = useState<OrderType>("LIMIT");
@@ -77,11 +76,8 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   const priceEnabled   = orderType === "LIMIT" || orderType === "SL";
   const triggerEnabled = orderType === "SL"    || orderType === "SL-M";
 
-  // Stop-loss orders may use either side (closing/protective); normal orders are
-  // restricted to the role's own side.
-  const isStopLoss = orderType === "SL" || orderType === "SL-M";
-  const canUseBuy  = isStopLoss || canBuy;
-  const canUseSell = isStopLoss || canSell;
+  const canUseBuy  = canBuy;
+  const canUseSell = canSell;
 
   const availableCash = useTradingStore((s) => s.availableCash);
 
@@ -110,8 +106,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     const p = prefillRef.current;
     const q = quoteRef.current;
     const nextOrderType = p?.orderType ?? "LIMIT";
-    const nextIsSL = nextOrderType === "SL" || nextOrderType === "SL-M";
-    setCurrentSide(allowedSide(sideRef.current, nextIsSL));
+    setCurrentSide(allowedSide(sideRef.current));
     setActiveTab("Regular");
     setProduct(defaultProduct);
     setOrderType(nextOrderType);
@@ -131,13 +126,11 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     return () => window.removeEventListener("keydown", h);
   }, [open, onClose]);
 
-  // If the order type changes away from SL and the current side is no longer
-  // permitted for this role, flip to the allowed side.
+  // If the current side is ever not permitted for this role, flip to the allowed one.
   useEffect(() => {
-    if (isStopLoss) return;
     if (currentSide === "BUY" && !canBuy) setCurrentSide(canSell ? "SELL" : "BUY");
     if (currentSide === "SELL" && !canSell) setCurrentSide(canBuy ? "BUY" : "SELL");
-  }, [isStopLoss, currentSide, canBuy, canSell]);
+  }, [currentSide, canBuy, canSell]);
 
   const theme = THEME[currentSide];
 

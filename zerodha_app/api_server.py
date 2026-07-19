@@ -1191,7 +1191,15 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     self._send_json(api.save_watchlist(self._read_json()))
                     return
                 if parsed.path == "/api/orders":
-                    self._send_json(api.place_order(self._read_json()))
+                    body = self._read_json()
+                    side = str(body.get("side") or "BUY").strip().upper()
+                    if not role_allows_side(user["role"], side):
+                        self._send_json(
+                            {"ok": False, "error": f"Your role ({user['role']}) cannot place {side} orders."},
+                            status=403,
+                        )
+                        return
+                    self._send_json(api.place_order(body))
                     return
             except Exception as exc:
                 if _is_client_disconnect(exc):
@@ -1289,6 +1297,18 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
 
 def _is_client_disconnect(exc: Exception) -> bool:
     return isinstance(exc, (BrokenPipeError, ConnectionResetError))
+
+
+def role_allows_side(role: str, side: str) -> bool:
+    """Strict order-side gating: buyers only BUY, sellers only SELL,
+    traders and super admins both. Unknown roles get nothing."""
+    if role in ("trader", "super_admin"):
+        return True
+    if role == "buyer":
+        return side == "BUY"
+    if role == "seller":
+        return side == "SELL"
+    return False
 
 
 def _normalize_instrument_payload(row: dict[str, Any]) -> dict[str, Any] | None:

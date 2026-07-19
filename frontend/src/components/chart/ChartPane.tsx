@@ -330,6 +330,9 @@ export const ChartPane = memo(function ChartPane({
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {/* SL-from-order places the OPPOSITE side of the last order, so it
+                only exists for roles that can trade both sides. */}
+            {canBuy && canSell && (
             <button
               onClick={handleSLFromOrder}
               disabled={!latestOrderForInstrument}
@@ -342,6 +345,7 @@ export const ChartPane = memo(function ChartPane({
             >
               SL
             </button>
+            )}
             <IconButton title="Zoom in" onClick={() => chartRef.current?.zoomIn()}>
               <Plus className="h-4 w-4" />
             </IconButton>
