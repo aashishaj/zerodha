@@ -239,6 +239,9 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
   const lastFitViewKeyRef = useRef<string | undefined>(undefined);
   // Tracks how many bars were loaded at last render so we can diff
   const prevDataLengthRef = useRef(0);
+  // Time of the last bar applied to the series; used to detect when merged
+  // data changed shape mid-array (series.update only accepts the newest bar)
+  const prevLastTimeRef = useRef<number | null>(null);
   // Accumulates live H/L/C between historical polls for the forming bar
   const liveBarRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
 
@@ -457,6 +460,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       chartRef.current = null;
       lastFitViewKeyRef.current = undefined;
       prevDataLengthRef.current = 0;
+      prevLastTimeRef.current = null;
       liveBarRef.current = null;
       chart.remove();
     };
@@ -542,20 +546,37 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     const prev = prevDataLengthRef.current;
     const curr = normalized.chartData.length;
 
+    // series.update() only accepts the current last bar or newer ones. If the
+    // merged data changed shape mid-array (backfill, re-sort, corrected rows),
+    // the bar at prev-1 is older than what the series already holds and
+    // update() would throw "Cannot update oldest data" — resync fully instead.
+    const start = Math.max(0, prev - 1);
+    const startTime = curr > 0 ? (normalized.chartData[Math.min(start, curr - 1)].time as unknown as number) : null;
+    const appendOnly =
+      prevLastTimeRef.current === null || (startTime !== null && startTime >= prevLastTimeRef.current);
+
     let didFullReload = false;
-    if (isNewView || prev === 0 || curr < prev) {
-      // Full reload: new instrument/timeframe, first load, or data shrunk (e.g. after reset)
+    if (isNewView || prev === 0 || curr < prev || !appendOnly) {
+      // Full reload: new instrument/timeframe, first load, shrunk or reshaped data
       seriesRef.current.setData(normalized.chartData);
       didFullReload = true;
     } else {
       // Incremental: use series.update() for the forming bar + any new bars.
       // Starting from prev-1 catches an in-progress candle whose OHLC changed since last tick.
-      for (let i = Math.max(0, prev - 1); i < curr; i++) {
-        seriesRef.current.update(normalized.chartData[i]);
+      try {
+        for (let i = start; i < curr; i++) {
+          seriesRef.current.update(normalized.chartData[i]);
+        }
+      } catch {
+        // Safety net for any remaining ordering surprise — never crash the pane.
+        seriesRef.current.setData(normalized.chartData);
+        didFullReload = true;
       }
     }
 
     prevDataLengthRef.current = curr;
+    prevLastTimeRef.current =
+      curr > 0 ? (normalized.chartData[curr - 1].time as unknown as number) : null;
     liveBarRef.current = null; // re-sync from fresh historical data on next tick
     applyPriceScale();
 
