@@ -94,3 +94,42 @@ class InstrumentCatalogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ExchangeDumpTests(unittest.TestCase):
+    def test_from_exchange_dump_builds_catalog(self) -> None:
+        dump = {
+            "NSE": [
+                {
+                    "instrument_token": 1,
+                    "tradingsymbol": "RELIANCE",
+                    "name": "RELIANCE",
+                    "exchange": "NSE",
+                    "segment": "NSE",
+                    "instrument_type": "EQ",
+                }
+            ],
+            "NFO": [
+                {
+                    "instrument_token": 2,
+                    "tradingsymbol": "NIFTY26MAY24000CE",
+                    "name": "NIFTY",
+                    "exchange": "NFO",
+                    "segment": "NFO-OPT",
+                    "instrument_type": "CE",
+                    "expiry": "2026-05-26",
+                    "strike": 24000,
+                    "lot_size": 75,
+                }
+            ],
+        }
+        catalog = InstrumentCatalog.from_exchange_dump(dump)
+        self.assertEqual(len(catalog.rows), 2)
+        option = catalog.get_by_token(2)
+        self.assertIsNotNone(option)
+        # ISO expiry strings (as stored in the JSON disk cache) parse into dates.
+        self.assertEqual(option.expiry, date(2026, 5, 26))
+
+    def test_from_exchange_dump_skips_invalid_rows(self) -> None:
+        dump = {"NSE": [{"tradingsymbol": "NO-TOKEN"}, {"instrument_token": "x"}]}
+        self.assertEqual(InstrumentCatalog.from_exchange_dump(dump).rows, [])

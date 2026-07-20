@@ -8,7 +8,7 @@ import queue
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -167,6 +167,9 @@ class ZerodhaFrontendAPI:
         self._instrument_by_symbol: dict[str, dict[str, Any]] = {}
         self._broadcaster_by_account: dict[str | None, TickBroadcaster] = {}
         self._broadcaster_lock = threading.Lock()
+        # Guards the one-time instrument load: without it, every poll that
+        # arrives during the first (slow) download starts another full one.
+        self._instruments_lock = threading.Lock()
         # The active account for the in-flight request (set per worker thread).
         self._request_ctx = threading.local()
         self._user_store: UserStore | None = None
@@ -720,22 +723,62 @@ class ZerodhaFrontendAPI:
         self._broadcaster_by_account.pop(account_user_id, None)
         return kite
 
+    def _instrument_cache_path(self) -> Path:
+        return self.options.settings.token_cache_path.parent / "instruments_cache.json"
+
+    def _load_instrument_dump(self) -> dict[str, list[dict[str, Any]]]:
+        """Per-exchange instrument rows from today's disk cache, else one Kite download.
+
+        Kite's instrument list changes at most daily, so a dated cache lets the
+        server restart without re-downloading tens of MB from the broker.
+        """
+        cache_path = self._instrument_cache_path()
+        today = date.today().isoformat()
+        try:
+            cached = json.loads(cache_path.read_text())
+            if cached.get("date") == today and cached.get("by_exchange"):
+                LOGGER.info("Instruments loaded from cache: %s", cache_path)
+                return cached["by_exchange"]
+        except (OSError, ValueError):
+            pass
+
+        kite = self._get_kite()
+        by_exchange: dict[str, list[dict[str, Any]]] = {}
+        for exchange in ("NSE", "BSE", "NFO", "MCX", "CDS"):
+            try:
+                by_exchange[exchange] = kite.instruments(exchange)
+            except Exception:
+                LOGGER.warning("Instrument download failed for %s", exchange)
+                by_exchange[exchange] = []
+
+        # Only cache a complete dump — a partial one would pin missing
+        # exchanges for the rest of the day instead of retrying.
+        if all(by_exchange.values()):
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps({"date": today, "by_exchange": by_exchange}, default=str))
+            except OSError:
+                LOGGER.warning("Could not write instrument cache to %s", cache_path)
+        return by_exchange
+
     def _ensure_instruments_loaded(self) -> None:
         if self._raw_instruments is not None:
             return
+        with self._instruments_lock:
+            # Double-checked: another thread may have finished while we waited.
+            if self._raw_instruments is not None:
+                return
+            self._load_instruments_locked()
 
-        kite = self._get_kite()
-        catalog = InstrumentCatalog.from_kite(kite)
+    def _load_instruments_locked(self) -> None:
+        by_exchange = self._load_instrument_dump()
+        catalog = InstrumentCatalog.from_exchange_dump(by_exchange)
         self._instrument_catalog = catalog
 
         raw_rows: list[dict[str, Any]] = []
         symbol_index: dict[str, dict[str, Any]] = {}
         token_index: dict[int, dict[str, Any]] = {}
-        for exchange in ("NSE", "BSE", "NFO", "MCX", "CDS"):
-            try:
-                payload = kite.instruments(exchange)
-            except Exception:
-                continue
+        for payload in by_exchange.values():
             for row in payload:
                 normalized = _normalize_instrument_payload(row)
                 if not normalized:

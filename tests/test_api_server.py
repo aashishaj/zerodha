@@ -263,3 +263,93 @@ class RoleAllowsSideTests(unittest.TestCase):
     def test_unknown_role_gets_nothing(self):
         self.assertFalse(role_allows_side("", "BUY"))
         self.assertFalse(role_allows_side("viewer", "SELL"))
+
+
+class InstrumentCacheTests(unittest.TestCase):
+    """Disk cache + single-download behavior of _load_instrument_dump."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        settings = Settings(
+            api_key="key",
+            api_secret="secret",
+            token_cache_path=root / ".zerodha" / "tokens.json",
+            watchlist_path=root / "watchlist.json",
+            app_db_path=root / "app.db",
+        )
+        self.api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+        self.cache_path = root / ".zerodha" / "instruments_cache.json"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _install_counting_kite(self):
+        calls = []
+
+        class CountingKite:
+            def instruments(self, exchange):
+                calls.append(exchange)
+                return [
+                    {
+                        "instrument_token": 1,
+                        "exchange_token": 1,
+                        "tradingsymbol": f"SYM{exchange}",
+                        "name": f"SYM{exchange}",
+                        "exchange": exchange,
+                        "segment": exchange,
+                        "instrument_type": "EQ",
+                        "last_price": 1.0,
+                        "tick_size": 0.05,
+                        "lot_size": 1,
+                        "strike": 0,
+                        "expiry": None,
+                    }
+                ]
+
+        self.api._kite_by_account[None] = (CountingKite(), "tok")
+        return calls
+
+    def test_download_writes_dated_cache(self):
+        calls = self._install_counting_kite()
+        dump = self.api._load_instrument_dump()
+        self.assertEqual(len(calls), 5)
+        self.assertTrue(self.cache_path.exists())
+        payload = json.loads(self.cache_path.read_text())
+        self.assertEqual(payload["date"], date.today().isoformat())
+        self.assertEqual(sorted(dump.keys()), ["BSE", "CDS", "MCX", "NFO", "NSE"])
+
+    def test_todays_cache_skips_download(self):
+        calls = self._install_counting_kite()
+        self.api._load_instrument_dump()
+        calls.clear()
+        dump = self.api._load_instrument_dump()
+        self.assertEqual(calls, [])
+        self.assertEqual(dump["NSE"][0]["tradingsymbol"], "SYMNSE")
+
+    def test_stale_cache_redownloads(self):
+        calls = self._install_counting_kite()
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path.write_text(json.dumps({"date": "2000-01-01", "by_exchange": {"NSE": [{"x": 1}]}}))
+        self.api._load_instrument_dump()
+        self.assertEqual(len(calls), 5)
+
+    def test_partial_download_is_not_cached(self):
+        class PartialKite:
+            def instruments(self, exchange):
+                if exchange == "MCX":
+                    raise RuntimeError("down")
+                return [{"instrument_token": 1, "tradingsymbol": "A", "name": "A", "exchange": exchange, "segment": exchange, "instrument_type": "EQ"}]
+
+        self.api._kite_by_account[None] = (PartialKite(), "tok")
+        dump = self.api._load_instrument_dump()
+        self.assertEqual(dump["MCX"], [])
+        self.assertFalse(self.cache_path.exists())
+
+    def test_ensure_instruments_loaded_is_memoized(self):
+        calls = self._install_counting_kite()
+        self.api._ensure_instruments_loaded()
+        first = len(calls)
+        self.api._ensure_instruments_loaded()
+        self.assertEqual(len(calls), first)
+        self.assertTrue(any(r["tradingsymbol"] == "SYMNSE" for r in self.api._raw_instruments))

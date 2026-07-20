@@ -67,6 +67,14 @@ class InstrumentCatalog:
         return cls(rows)
 
     @classmethod
+    def from_exchange_dump(cls, rows_by_exchange: dict[str, list[dict[str, Any]]]) -> "InstrumentCatalog":
+        """Build a catalog from already-downloaded per-exchange instrument rows."""
+        rows: list[InstrumentRow] = []
+        for payload in rows_by_exchange.values():
+            rows.extend(_normalize_rows(payload))
+        return cls(rows)
+
+    @classmethod
     def from_legacy_file(cls, path: Path = LEGACY_INSTRUMENTS_PATH) -> "InstrumentCatalog":
         if not path.exists():
             return cls([])
