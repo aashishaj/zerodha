@@ -86,8 +86,14 @@ export function OrdersTab() {
                     <td
                       className="px-3 py-2.5 text-right text-[12px] font-medium"
                       style={{ color: STATUS_COLOR[order.status] ?? "#444" }}
+                      title={order.status_message ?? undefined}
                     >
                       {order.status}
+                      {order.status_message && (
+                        <div className="mt-0.5 max-w-[280px] truncate text-[11px] font-normal text-[#9aa3af]">
+                          {order.status_message}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 );

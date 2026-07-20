@@ -158,7 +158,13 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
         useTradingStore.getState().closeOrderTicket();
       }, 1000);
     } catch (err) {
-      setMessage({ text: err instanceof Error ? err.message : "Order request failed.", ok: false });
+      // Prefer the backend's explanation (Zerodha's rejection text) over
+      // axios' generic "Request failed with status code NNN".
+      const serverError = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setMessage({
+        text: serverError ?? (err instanceof Error ? err.message : "Order request failed."),
+        ok: false,
+      });
     } finally {
       setSubmitting(false);
     }

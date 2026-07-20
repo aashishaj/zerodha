@@ -159,6 +159,8 @@ export interface Order {
   product: ProductType;
   validity: OrderValidity;
   status: OrderStatus;
+  /** Zerodha's explanation for REJECTED/CANCELLED orders. */
+  status_message?: string | null;
   filled_quantity?: number;
   pending_quantity?: number;
   average_price?: number;
