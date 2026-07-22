@@ -1040,7 +1040,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 if _is_client_disconnect(exc):
                     LOGGER.debug("Client disconnected during GET %s", parsed.path)
                     return
-                if _TOKEN_EXCEPTION is not None and isinstance(exc, _TOKEN_EXCEPTION):
+                if _is_token_error(exc):
                     api.handle_token_invalid()
                     self._send_json(
                         {"ok": False, "error": "Account session expired. Reconnect required.", "code": "TOKEN_INVALID"},
@@ -1248,7 +1248,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 if _is_client_disconnect(exc):
                     LOGGER.debug("Client disconnected during POST %s", parsed.path)
                     return
-                if _TOKEN_EXCEPTION is not None and isinstance(exc, _TOKEN_EXCEPTION):
+                if _is_token_error(exc):
                     api.handle_token_invalid()
                     self._send_json(
                         {"ok": False, "error": "Account session expired. Reconnect required.", "code": "TOKEN_INVALID"},
@@ -1340,6 +1340,26 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
 
 def _is_client_disconnect(exc: Exception) -> bool:
     return isinstance(exc, (BrokenPipeError, ConnectionResetError))
+
+
+def _is_token_error(exc: Exception) -> bool:
+    """True if the exception signals an expired/invalid Zerodha access token.
+
+    Kite raises a dedicated ``TokenException`` in most places, but the
+    historical-data endpoint returns the same daily-expiry condition as an
+    ``InputException`` whose message is just ``"invalid token"`` — so match the
+    known messages too. The ``instrument`` guard avoids treating an unrelated
+    "invalid instrument_token" input error as a session expiry.
+    """
+    if _TOKEN_EXCEPTION is not None and isinstance(exc, _TOKEN_EXCEPTION):
+        return True
+    message = str(exc).strip().lower()
+    if not message or "instrument" in message:
+        return False
+    return any(
+        phrase in message
+        for phrase in ("invalid token", "token is invalid", "token expired", "access token")
+    )
 
 
 def role_allows_side(role: str, side: str) -> bool:

@@ -13,6 +13,7 @@ from zerodha_app.api_server import (
     _quote_key_for_instrument,
     _resample_rows_by_minutes,
     _resample_rows_by_week,
+    _is_token_error,
     role_allows_side,
 )
 from zerodha_app.config import Settings
@@ -263,6 +264,26 @@ class RoleAllowsSideTests(unittest.TestCase):
     def test_unknown_role_gets_nothing(self):
         self.assertFalse(role_allows_side("", "BUY"))
         self.assertFalse(role_allows_side("viewer", "SELL"))
+
+
+class TokenErrorDetectionTests(unittest.TestCase):
+    def test_invalid_token_message_is_a_token_error(self):
+        # Kite's historical endpoint returns expiry as InputException("invalid token").
+        self.assertTrue(_is_token_error(Exception("invalid token")))
+        self.assertTrue(_is_token_error(Exception("Token is invalid or has expired")))
+        self.assertTrue(_is_token_error(Exception("Access token is invalid")))
+
+    def test_typed_token_exception_is_detected(self):
+        try:
+            from kiteconnect.exceptions import TokenException
+        except Exception:
+            self.skipTest("kiteconnect not installed")
+        self.assertTrue(_is_token_error(TokenException("session expired")))
+
+    def test_unrelated_errors_are_not_token_errors(self):
+        self.assertFalse(_is_token_error(Exception("invalid instrument_token")))
+        self.assertFalse(_is_token_error(Exception("quantity must be greater than 0")))
+        self.assertFalse(_is_token_error(Exception("")))
 
 
 class InstrumentCacheTests(unittest.TestCase):
