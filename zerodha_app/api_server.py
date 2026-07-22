@@ -619,6 +619,17 @@ class ZerodhaFrontendAPI:
             "holdings": holdings,
         }
 
+    def get_positions(self) -> dict[str, Any]:
+        kite = self._get_kite()
+        # kite.positions() returns {"net": [...], "day": [...]}; the net book
+        # is what Kite's Positions page shows (intraday day positions netted).
+        positions = kite.positions()
+        net = positions.get("net", []) if isinstance(positions, dict) else []
+        return {
+            "ok": True,
+            "positions": net,
+        }
+
     # ── Auth helpers ─────────────────────────────────────────────────────────
 
     def get_auth_status(self) -> dict[str, Any]:
@@ -1032,6 +1043,9 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     return
                 if parsed.path == "/api/holdings":
                     self._send_json(api.get_holdings())
+                    return
+                if parsed.path == "/api/positions":
+                    self._send_json(api.get_positions())
                     return
                 if parsed.path == "/api/watchlist":
                     self._send_json(api.load_watchlist())

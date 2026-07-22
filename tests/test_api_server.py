@@ -108,6 +108,23 @@ class FakeKiteAPI:
             },
         }
 
+    def positions(self):
+        return {
+            "net": [
+                {
+                    "tradingsymbol": "NIFTY052224000CE",
+                    "exchange": "NFO",
+                    "product": "NRML",
+                    "quantity": 0,
+                    "average_price": 0.0,
+                    "last_price": 175.45,
+                    "close_price": 170.0,
+                    "pnl": 12145.0,
+                }
+            ],
+            "day": [],
+        }
+
 
 class APIServerTests(unittest.TestCase):
     def _build_api(self) -> ZerodhaFrontendAPI:
@@ -208,6 +225,24 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(rows[0]["strike"], 24000)
         self.assertEqual(rows[0]["ceInstrument"]["tradingsymbol"], "NIFTY052224000CE")
         self.assertEqual(rows[0]["peInstrument"]["tradingsymbol"], "NIFTY052224000PE")
+
+    def test_get_positions_returns_net_book(self):
+        api = self._build_api()
+        result = api.get_positions()
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["positions"]), 1)
+        self.assertEqual(result["positions"][0]["tradingsymbol"], "NIFTY052224000CE")
+        self.assertEqual(result["positions"][0]["pnl"], 12145.0)
+
+    def test_get_positions_handles_missing_net_key(self):
+        api = self._build_api()
+
+        class NoNetKite(FakeKiteAPI):
+            def positions(self):
+                return {}
+
+        api._kite_by_account[None] = (NoNetKite(), "test-token")
+        self.assertEqual(api.get_positions(), {"ok": True, "positions": []})
 
     def test_resamples_rows_by_minutes(self):
         rows = [

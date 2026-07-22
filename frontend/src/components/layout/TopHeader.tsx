@@ -41,7 +41,8 @@ export function TopHeader() {
             const isActive =
               (item === "Dashboard" && mainTab === "chart") ||
               (item === "Orders" && mainTab === "orders") ||
-              (item === "Holdings" && mainTab === "holdings");
+              (item === "Holdings" && mainTab === "holdings") ||
+              (item === "Positions" && mainTab === "positions");
             return (
               <button
                 key={item}
@@ -49,6 +50,7 @@ export function TopHeader() {
                   if (item === "Dashboard") setMainTab("chart");
                   else if (item === "Orders") setMainTab("orders");
                   else if (item === "Holdings") setMainTab("holdings");
+                  else if (item === "Positions") setMainTab("positions");
                 }}
                 className={`border-0 bg-transparent p-0 text-[13px] ${
                   isActive ? "font-medium text-[#222]" : "text-[#6b7280]"

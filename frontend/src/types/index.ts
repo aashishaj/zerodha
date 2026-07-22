@@ -14,7 +14,7 @@ export type Timeframe =
   | "1h"
   | "1d"
   | "1w";
-export type MainTab = "chart" | "option-chain" | "fundamentals" | "orders" | "holdings";
+export type MainTab = "chart" | "option-chain" | "fundamentals" | "orders" | "holdings" | "positions";
 export type LayoutId = "single" | "twoVertical" | "twoHorizontal";
 
 export interface IndicatorSettings {
@@ -178,6 +178,19 @@ export interface Holding {
   pnl: number;
   day_change: number;
   day_change_percentage: number;
+}
+
+export interface Position {
+  tradingsymbol: string;
+  exchange: string;
+  product: string;
+  quantity: number;
+  average_price: number;
+  last_price: number;
+  close_price: number;
+  pnl: number;
+  unrealised?: number;
+  realised?: number;
 }
 
 export interface OptionChainRow {

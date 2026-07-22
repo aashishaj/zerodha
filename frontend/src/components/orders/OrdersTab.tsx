@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Notebook, History } from "lucide-react";
+import { Notebook, History, AlertCircle } from "lucide-react";
 import { formatPrice } from "../../utils/format";
 import { useTradingStore } from "../../store/useTradingStore";
 
@@ -20,7 +20,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function OrdersTab() {
   const [activeSubTab, setActiveSubTab] = useState<OrdersSubTab>("orders");
-  const { orders, fetchOrders } = useTradingStore();
+  const { orders, fetchOrders, ordersError } = useTradingStore();
 
   useEffect(() => {
     void fetchOrders();
@@ -46,7 +46,14 @@ export function OrdersTab() {
         ))}
       </div>
 
-      {activeSubTab === "orders" && orders.length > 0 ? (
+      {activeSubTab === "orders" && ordersError ? (
+        <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+          <AlertCircle className="h-14 w-14 text-[#e5793b]" strokeWidth={1.25} />
+          <p className="mt-5 max-w-md text-[15px] leading-6 text-[#444]">
+            Couldn't load your orders. Your Zerodha session may have expired — reconnect the account and try again.
+          </p>
+        </div>
+      ) : activeSubTab === "orders" && orders.length > 0 ? (
         <div className="flex-1 overflow-auto px-6 py-5">
           <div className="mb-3 text-[13px] text-[#6b7280]">
             Orders ({orders.length})

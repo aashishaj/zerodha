@@ -6,6 +6,7 @@ import { MarketDepth } from "../watchlist/MarketDepth";
 import { WatchlistSidebar } from "../watchlist/WatchlistSidebar";
 import { OrdersTab } from "../orders/OrdersTab";
 import { HoldingsTab } from "../holdings/HoldingsTab";
+import { PositionsTab } from "../positions/PositionsTab";
 
 export function AppShell() {
   const {
@@ -36,6 +37,10 @@ export function AppShell() {
         ) : mainTab === "holdings" ? (
           <div className="w-full">
             <HoldingsTab />
+          </div>
+        ) : mainTab === "positions" ? (
+          <div className="w-full">
+            <PositionsTab />
           </div>
         ) : null}
       </div>

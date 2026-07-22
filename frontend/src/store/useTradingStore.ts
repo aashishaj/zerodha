@@ -7,6 +7,7 @@ import { watchlistService } from "../services/watchlistService";
 import { optionChainService } from "../services/optionChainService";
 import { orderService } from "../services/orderService";
 import { holdingsService } from "../services/holdingsService";
+import { positionsService } from "../services/positionsService";
 import { parseChartDate } from "../utils/dates";
 import { formatInstrumentLabel } from "../utils/format";
 import type {
@@ -23,6 +24,7 @@ import type {
   Order,
   OrderSide,
   OrderTicketPrefill,
+  Position,
   Quote,
   Timeframe,
   WatchlistItem,
@@ -135,8 +137,13 @@ interface TradingState {
     trigger_price?: number;
   }) => Promise<{ order_id: string }>;
   fetchOrders: () => Promise<void>;
+  ordersError: boolean;
   holdings: Holding[];
   fetchHoldings: () => Promise<void>;
+  holdingsError: boolean;
+  positions: Position[];
+  fetchPositions: () => Promise<void>;
+  positionsError: boolean;
 }
 
 const toWatchlistItem = (instrument: Instrument, quote?: Quote): WatchlistItem => ({
@@ -195,7 +202,11 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   availableCash: null,
   optionChainRows: [],
   orders: [],
+  ordersError: false,
   holdings: [],
+  holdingsError: false,
+  positions: [],
+  positionsError: false,
   selectedUnderlying: "NIFTY",
   selectedExpiry: "",
   activeOrderTicketInstrument: null,
@@ -503,20 +514,33 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     try {
       const result = await orderService.getOrders();
       if (result.ok) {
-        set({ orders: result.orders });
+        set({ orders: result.orders, ordersError: false });
       }
     } catch (err) {
       console.error("Failed to fetch orders:", err);
+      set({ ordersError: true });
     }
   },
   async fetchHoldings() {
     try {
       const result = await holdingsService.getHoldings();
       if (result.ok) {
-        set({ holdings: result.holdings });
+        set({ holdings: result.holdings, holdingsError: false });
       }
     } catch (err) {
       console.error("Failed to fetch holdings:", err);
+      set({ holdingsError: true });
+    }
+  },
+  async fetchPositions() {
+    try {
+      const result = await positionsService.getPositions();
+      if (result.ok) {
+        set({ positions: result.positions, positionsError: false });
+      }
+    } catch (err) {
+      console.error("Failed to fetch positions:", err);
+      set({ positionsError: true });
     }
   },
   setLayout(layout) {
