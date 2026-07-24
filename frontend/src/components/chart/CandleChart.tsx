@@ -294,24 +294,46 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       zoomByFactor(1.4);
     },
     applyTick(price: number) {
-      if (!seriesRef.current || cleanedCandlesRef.current.length === 0) return;
-      const lastCandle = cleanedCandlesRef.current[cleanedCandlesRef.current.length - 1];
-      const ts = toChartTimestamp(lastCandle.time);
-      if (ts === null) return;
+      const series = seriesRef.current;
+      const candles = cleanedCandlesRef.current;
+      if (!series || candles.length === 0) return;
 
-      if (!liveBarRef.current || liveBarRef.current.time !== ts) {
-        // New candle boundary or first tick — seed from historical data
-        liveBarRef.current = {
-          time: ts,
-          open: Number(lastCandle.open),
-          high: Number(lastCandle.high),
-          low: Number(lastCandle.low),
-          close: price,
-        };
+      const lastCandle = candles[candles.length - 1];
+      const lastHistTs = toChartTimestamp(lastCandle.time);
+      if (lastHistTs === null) return;
+
+      // Interval (seconds) inferred from the two most recent historical bars.
+      let step = 60;
+      if (candles.length >= 2) {
+        const prevTs = toChartTimestamp(candles[candles.length - 2].time);
+        if (prevTs !== null && lastHistTs - prevTs > 0) step = lastHistTs - prevTs;
+      }
+
+      // Which interval bucket does "now" fall into? For intraday intervals the
+      // grid aligns with the historical bars, so once the clock crosses a
+      // boundary we open a NEW candle immediately instead of piling ticks onto
+      // the previous bar and waiting for the ~10s poll to retroactively fix it.
+      // Daily/weekly bars (step >= 1 day) keep updating the current bar.
+      const nowSec = Math.floor(Date.now() / 1000);
+      const boundary = Math.floor(nowSec / step) * step;
+      const barTime = step < 86_400 ? Math.max(lastHistTs, boundary) : lastHistTs;
+      const isNewBar = barTime > lastHistTs;
+
+      if (!liveBarRef.current || liveBarRef.current.time !== barTime) {
+        // Fresh bucket: a new candle opens at the first tick's price; an
+        // in-progress historical bar seeds from its own OHLC.
+        liveBarRef.current = isNewBar
+          ? { time: barTime, open: price, high: price, low: price, close: price }
+          : {
+              time: barTime,
+              open: Number(lastCandle.open),
+              high: Number(lastCandle.high),
+              low: Number(lastCandle.low),
+              close: price,
+            };
       } else {
-        // Same forming bar — accumulate H/L, update close
         liveBarRef.current = {
-          time: ts,
+          time: barTime,
           open: liveBarRef.current.open,
           high: Math.max(liveBarRef.current.high, price),
           low: Math.min(liveBarRef.current.low, price),
@@ -319,7 +341,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
         };
       }
       const bar = liveBarRef.current;
-      seriesRef.current.update({
+      series.update({
         time: bar.time as never,
         open: bar.open,
         high: bar.high,
