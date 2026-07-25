@@ -1339,7 +1339,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
             status: int = 200,
             set_cookie: tuple[str, str, int] | None = None,
         ) -> None:
-            encoded = json.dumps(payload).encode("utf-8")
+            encoded = json.dumps(payload, default=_json_default).encode("utf-8")
             try:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
@@ -1371,6 +1371,18 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 raise
 
     return APIHandler
+
+
+def _json_default(value: Any) -> str:
+    """JSON fallback for types the stdlib encoder rejects.
+
+    Kite's orders/positions payloads embed ``datetime``/``date`` objects
+    (order_timestamp, exchange_timestamp, …); without this the whole response
+    500s the moment an account actually has orders.
+    """
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value)
 
 
 def _is_client_disconnect(exc: Exception) -> bool:

@@ -8,6 +8,7 @@ from zerodha_app.api_server import (
     APIOptions,
     ZerodhaFrontendAPI,
     _expand_minute_rows,
+    _json_default,
     _normalize_candle,
     _normalize_instrument_payload,
     _quote_key_for_instrument,
@@ -107,6 +108,20 @@ class FakeKiteAPI:
                 "oi": 0,
             },
         }
+
+    def orders(self):
+        # Kite embeds datetime objects in order rows.
+        return [
+            {
+                "order_id": "250725000000001",
+                "tradingsymbol": "NIFTY052224000CE",
+                "transaction_type": "BUY",
+                "quantity": 75,
+                "status": "COMPLETE",
+                "order_timestamp": datetime(2026, 7, 25, 9, 18, 24),
+                "exchange_timestamp": datetime(2026, 7, 25, 9, 18, 24),
+            }
+        ]
 
     def positions(self):
         return {
@@ -254,6 +269,17 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(rows[0]["strike"], 24000)
         self.assertEqual(rows[0]["ceInstrument"]["tradingsymbol"], "NIFTY052224000CE")
         self.assertEqual(rows[0]["peInstrument"]["tradingsymbol"], "NIFTY052224000PE")
+
+    def test_orders_with_datetime_fields_are_json_serializable(self):
+        # The real crash: Kite orders carry datetime objects; the raw payload
+        # must survive json.dumps via the _send_json default.
+        api = self._build_api()
+        payload = api.get_orders()
+        encoded = json.dumps(payload, default=_json_default)
+        self.assertIn("2026-07-25T09:18:24", encoded)
+        # Plain json.dumps (no default) would still raise — proving the fix matters.
+        with self.assertRaises(TypeError):
+            json.dumps(payload)
 
     def test_get_positions_returns_net_book(self):
         api = self._build_api()
