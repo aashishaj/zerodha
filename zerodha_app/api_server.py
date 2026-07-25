@@ -160,7 +160,8 @@ class ZerodhaFrontendAPI:
         self.options = options
         # Kite clients and tick broadcasters are cached per account (keyed by the
         # Zerodha user_id, or None for the legacy/global single-account token).
-        self._kite_by_account: dict[str | None, tuple[Any, str]] = {}
+        # Per-account memoized client: account_user_id -> (client, token, api_key)
+        self._kite_by_account: dict[str | None, tuple[Any, str, str]] = {}
         self._instrument_catalog: InstrumentCatalog | None = None
         self._raw_instruments: list[dict[str, Any]] | None = None
         self._instrument_by_token: dict[int, dict[str, Any]] = {}
@@ -659,6 +660,7 @@ class ZerodhaFrontendAPI:
         api_key: str | None = None
         api_secret: str | None = None
         label: str | None = None
+        expected_user_id: str | None = None
         if connect_nonce is not None:
             pending = self._pending_connects.pop(connect_nonce, None)
             if pending is None:
@@ -670,9 +672,14 @@ class ZerodhaFrontendAPI:
             if account is None:
                 raise ValueError("Account not found.")
             api_key, api_secret = account["api_key"], account["api_secret"]
+            # A reconnect must land on the same Zerodha user, or we'd overwrite
+            # this account's token/credentials with a different login's.
+            expected_user_id = account["zerodha_user_id"]
 
         auth = AuthManager(self.options.settings, api_key=api_key, api_secret=api_secret)
-        _, user_id, user_name = auth.create_session_detailed(request_token)
+        _, user_id, user_name = auth.create_session_detailed(
+            request_token, expected_user_id=expected_user_id
+        )
         if user_id:
             self.account_store().upsert_account(
                 user_id,
@@ -680,6 +687,9 @@ class ZerodhaFrontendAPI:
                 api_key=api_key,
                 api_secret=api_secret,
             )
+            # A freshly connected account must rebuild its client next call.
+            self._kite_by_account.pop(user_id, None)
+            self._broadcaster_by_account.pop(user_id, None)
 
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -714,11 +724,16 @@ class ZerodhaFrontendAPI:
         account_user_id = self._active_account_user_id()
         auth = AuthManager(self.options.settings)
         # Re-read the cached token so a token written by the separate callback
-        # bridge process is picked up without restarting the API server. Keep
-        # the existing client unless a different token has since been cached.
+        # bridge process is picked up without restarting the API server.
         cached = auth.get_cached_access_token(account_user_id)
+        api_key = self._account_api_key(account_user_id)
+
+        # Reuse the memoized client only when the api_key is unchanged. Keying on
+        # the token alone left a stale client bound to an OUTDATED api_key (e.g.
+        # one built before an account's own key was set), which Kite then
+        # rejected as "invalid token" despite a perfectly valid token.
         entry = self._kite_by_account.get(account_user_id)
-        if entry is not None and (cached is None or cached == entry[1]):
+        if entry is not None and entry[2] == api_key and (cached is None or entry[1] == cached):
             return entry[0]
 
         if cached is None:
@@ -726,11 +741,15 @@ class ZerodhaFrontendAPI:
             # account-scoped). A missing token means the account must be
             # (re)connected via the OAuth flow.
             raise RuntimeError("This account is not connected. Ask an admin to reconnect it.")
-        access_token = cached
-        kite = KiteConnect(api_key=self._account_api_key(account_user_id))
-        kite.set_access_token(access_token)
-        self._kite_by_account[account_user_id] = (kite, access_token)
-        # Drop any broadcaster bound to the old token so it rebinds on next use.
+
+        LOGGER.info(
+            "Building Kite client account=%s api_key=%s… token=%s…",
+            account_user_id, api_key[:6], cached[:6],
+        )
+        kite = KiteConnect(api_key=api_key)
+        kite.set_access_token(cached)
+        self._kite_by_account[account_user_id] = (kite, cached, api_key)
+        # Drop any broadcaster bound to the old token/key so it rebinds on next use.
         self._broadcaster_by_account.pop(account_user_id, None)
         return kite
 
@@ -1055,6 +1074,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     LOGGER.debug("Client disconnected during GET %s", parsed.path)
                     return
                 if _is_token_error(exc):
+                    LOGGER.warning("Token rejected for %s: %s", parsed.path, exc)
                     api.handle_token_invalid()
                     self._send_json(
                         {"ok": False, "error": "Account session expired. Reconnect required.", "code": "TOKEN_INVALID"},
@@ -1263,6 +1283,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     LOGGER.debug("Client disconnected during POST %s", parsed.path)
                     return
                 if _is_token_error(exc):
+                    LOGGER.warning("Token rejected for %s: %s", parsed.path, exc)
                     api.handle_token_invalid()
                     self._send_json(
                         {"ok": False, "error": "Account session expired. Reconnect required.", "code": "TOKEN_INVALID"},

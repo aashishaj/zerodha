@@ -135,7 +135,7 @@ class APIServerTests(unittest.TestCase):
             watchlist_path=Path("watchlist.json"),
         )
         api = ZerodhaFrontendAPI(APIOptions(settings=settings))
-        api._kite_by_account[None] = (FakeKiteAPI(), "test-token")
+        api._kite_by_account[None] = (FakeKiteAPI(), "test-token", "key")
         return api
 
     def test_get_kite_rebuilds_when_cached_token_changes(self):
@@ -162,6 +162,35 @@ class APIServerTests(unittest.TestCase):
             self.assertIsNot(second, first)
             self.assertEqual(api._kite_by_account[None][1], "token-two")
 
+    def test_get_kite_rebuilds_when_api_key_changes(self):
+        # A stale client bound to an outdated api_key must not be reused even
+        # when the token is unchanged — this was the "invalid token" trap.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "tokens.json"
+            today = date.today().isoformat()
+            # Token stored per-account so _account_api_key can vary independently.
+            cache_path.write_text(json.dumps({"by_account": {"MKQ150": {today: "tok"}}, "legacy": {}}))
+            settings = Settings(
+                api_key="env-key",
+                api_secret="secret",
+                token_cache_path=cache_path,
+                watchlist_path=Path(temp_dir) / "watchlist.json",
+                app_db_path=Path(temp_dir) / "app.db",
+            )
+            api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+            api.set_request_account("MKQ150")
+
+            # No stored key yet -> env-key fallback builds the first client.
+            first = api._get_kite()
+            self.assertEqual(api._kite_by_account["MKQ150"][2], "env-key")
+
+            # Admin sets the account's own key; the next call must rebuild.
+            acc = api.account_store().upsert_account("MKQ150", label="A", api_key="own-key", api_secret="s")
+            self.assertIsNotNone(acc)
+            second = api._get_kite()
+            self.assertIsNot(second, first)
+            self.assertEqual(api._kite_by_account["MKQ150"][2], "own-key")
+
     def test_funds_returns_live_balance_as_available_cash(self):
         api = self._build_api()
         self.assertEqual(api.funds(), {"availableCash": 9876.54})
@@ -173,7 +202,7 @@ class APIServerTests(unittest.TestCase):
             def margins(self, segment=None):
                 return {"equity": {"net": 500.0}}
 
-        api._kite_by_account[None] = (NoAvailableKite(), "test-token")
+        api._kite_by_account[None] = (NoAvailableKite(), "test-token", "key")
         self.assertEqual(api.funds(), {"availableCash": 500.0})
 
     def test_normalize_instrument_payload(self):
@@ -241,7 +270,7 @@ class APIServerTests(unittest.TestCase):
             def positions(self):
                 return {}
 
-        api._kite_by_account[None] = (NoNetKite(), "test-token")
+        api._kite_by_account[None] = (NoNetKite(), "test-token", "key")
         self.assertEqual(api.get_positions(), {"ok": True, "positions": []})
 
     def test_resamples_rows_by_minutes(self):
@@ -363,7 +392,7 @@ class InstrumentCacheTests(unittest.TestCase):
                     }
                 ]
 
-        self.api._kite_by_account[None] = (CountingKite(), "tok")
+        self.api._kite_by_account[None] = (CountingKite(), "tok", "key")
         return calls
 
     def test_download_writes_dated_cache(self):
@@ -397,7 +426,7 @@ class InstrumentCacheTests(unittest.TestCase):
                     raise RuntimeError("down")
                 return [{"instrument_token": 1, "tradingsymbol": "A", "name": "A", "exchange": exchange, "segment": exchange, "instrument_type": "EQ"}]
 
-        self.api._kite_by_account[None] = (PartialKite(), "tok")
+        self.api._kite_by_account[None] = (PartialKite(), "tok", "key")
         dump = self.api._load_instrument_dump()
         self.assertEqual(dump["MCX"], [])
         self.assertFalse(self.cache_path.exists())

@@ -110,6 +110,56 @@ class AuthManagerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Run `python run.py login` first"):
                     manager.get_access_token()
 
+    def test_create_session_rejects_mismatched_user(self) -> None:
+        """A reconnect that lands on a different Zerodha user writes nothing."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "tokens.json"
+            settings = Settings(
+                api_key="key",
+                api_secret="secret",
+                token_cache_path=cache_path,
+                watchlist_path=Path(temp_dir) / "watchlist.json",
+            )
+            with patch("zerodha_app.auth.KiteConnect"):
+                manager = AuthManager(settings)
+            # The Kite login came back as a DIFFERENT account than expected.
+            manager.kite.generate_session = lambda **_: {
+                "access_token": "tok",
+                "user_id": "MKQ150",
+                "user_name": "Someone Else",
+            }
+
+            with self.assertRaisesRegex(ValueError, "but this account is UU2297"):
+                manager.create_session_detailed("req", expected_user_id="UU2297")
+
+            # Nothing was persisted for the wrong user.
+            self.assertFalse(cache_path.exists())
+
+    def test_create_session_accepts_matching_user(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "tokens.json"
+            settings = Settings(
+                api_key="key",
+                api_secret="secret",
+                token_cache_path=cache_path,
+                watchlist_path=Path(temp_dir) / "watchlist.json",
+            )
+            with patch("zerodha_app.auth.KiteConnect"):
+                manager = AuthManager(settings)
+            manager.kite.generate_session = lambda **_: {
+                "access_token": "tok",
+                "user_id": "UU2297",
+                "user_name": "ASN Crest",
+            }
+            manager.kite.set_access_token = lambda _t: None
+
+            access_token, user_id, _ = manager.create_session_detailed(
+                "req", expected_user_id="UU2297"
+            )
+            self.assertEqual(access_token, "tok")
+            self.assertEqual(user_id, "UU2297")
+            self.assertEqual(manager.get_cached_access_token("UU2297"), "tok")
+
 
 if __name__ == "__main__":
     unittest.main()

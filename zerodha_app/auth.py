@@ -122,11 +122,19 @@ class AuthManager:
     def create_session(self, request_token: str) -> str:
         return self.create_session_detailed(request_token)[0]
 
-    def create_session_detailed(self, request_token: str) -> tuple[str, str, str]:
+    def create_session_detailed(
+        self, request_token: str, *, expected_user_id: str | None = None
+    ) -> tuple[str, str, str]:
         """Exchange a request token and cache the token per account.
 
         Returns ``(access_token, user_id, user_name)`` so callers can associate
         the freshly authorised Zerodha account with an app account record.
+
+        When ``expected_user_id`` is given (a reconnect of a known account), the
+        actual logged-in Zerodha user must match it — otherwise nothing is
+        written. This stops a wrong login (e.g. a different account already
+        signed into the browser) from silently overwriting another account's
+        token/credentials.
         """
         session = self.kite.generate_session(
             request_token=request_token,
@@ -135,6 +143,12 @@ class AuthManager:
         access_token = str(session["access_token"])
         user_id = str(session.get("user_id") or "")
         user_name = str(session.get("user_name") or "")
+        if expected_user_id and user_id and user_id != expected_user_id:
+            raise ValueError(
+                f"Logged in as {user_id}, but this account is {expected_user_id}. "
+                "Log in with the matching Zerodha account (an incognito window avoids "
+                "reusing another account's Kite session)."
+            )
         self.kite.set_access_token(access_token)
         self._write_token_store(access_token, user_id=user_id or None)
         return access_token, user_id, user_name
