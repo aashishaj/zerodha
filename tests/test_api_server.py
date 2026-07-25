@@ -6,6 +6,7 @@ from pathlib import Path
 
 from zerodha_app.api_server import (
     APIOptions,
+    TickBroadcaster,
     ZerodhaFrontendAPI,
     _expand_minute_rows,
     _json_default,
@@ -464,3 +465,49 @@ class InstrumentCacheTests(unittest.TestCase):
         self.api._ensure_instruments_loaded()
         self.assertEqual(len(calls), first)
         self.assertTrue(any(r["tradingsymbol"] == "SYMNSE" for r in self.api._raw_instruments))
+
+
+class FakeTicker:
+    MODE_FULL = "full"
+
+    def __init__(self, connected: bool = False) -> None:
+        self.connected = connected
+        self.subscribed: list[int] = []
+        self.modes: list[tuple] = []
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    def subscribe(self, tokens):
+        # Mirrors KiteTicker: subscribing before the socket is up raises.
+        if not self.connected:
+            raise AttributeError("'NoneType' object has no attribute 'sendMessage'")
+        self.subscribed.extend(tokens)
+
+    def set_mode(self, mode, tokens):
+        self.modes.append((mode, tuple(tokens)))
+
+
+class TickBroadcasterTests(unittest.TestCase):
+    def test_defers_subscribe_until_socket_connects(self):
+        b = TickBroadcaster(api_key="k", access_token="t")
+        fake = FakeTicker(connected=False)
+        b._ticker = fake  # skip real KiteTicker creation in _ensure_started
+
+        # Not connected yet: must NOT call subscribe (would crash), but records intent.
+        b.connect_client([111, 222])
+        self.assertEqual(fake.subscribed, [])
+        self.assertEqual(b._subscribed, {111, 222})
+
+        # Socket comes up -> _on_connect subscribes the recorded tokens.
+        fake.connected = True
+        b._on_connect(fake, None)
+        self.assertEqual(sorted(fake.subscribed), [111, 222])
+
+    def test_subscribes_immediately_when_already_connected(self):
+        b = TickBroadcaster(api_key="k", access_token="t")
+        fake = FakeTicker(connected=True)
+        b._ticker = fake
+        b.connect_client([333])
+        self.assertEqual(fake.subscribed, [333])
+        self.assertEqual(b._subscribed, {333})

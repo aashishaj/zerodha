@@ -88,13 +88,21 @@ class TickBroadcaster:
             self._clients[client_id] = q
             self._ensure_started()
             new_tokens = [t for t in tokens if t not in self._subscribed]
-            if new_tokens and self._ticker is not None:
-                try:
-                    self._ticker.subscribe(new_tokens)
-                    self._ticker.set_mode(self._ticker.MODE_FULL, new_tokens)
-                    self._subscribed.update(new_tokens)
-                except Exception:
-                    LOGGER.exception("TickBroadcaster: failed to subscribe tokens %s", new_tokens)
+            if new_tokens:
+                # Record the intent FIRST so _on_connect subscribes these once the
+                # socket is up — even if the immediate call below can't run yet.
+                self._subscribed.update(new_tokens)
+                ticker = self._ticker
+                # connect() is async: the WebSocket isn't ready immediately, and
+                # subscribing before it connects raises (ws is None). Only push
+                # now if already connected; otherwise _on_connect handles it.
+                is_connected = getattr(ticker, "is_connected", None)
+                if ticker is not None and callable(is_connected) and is_connected():
+                    try:
+                        ticker.subscribe(new_tokens)
+                        ticker.set_mode(ticker.MODE_FULL, new_tokens)
+                    except Exception:
+                        LOGGER.exception("TickBroadcaster: failed to subscribe tokens %s", new_tokens)
         return client_id, q
 
     def disconnect_client(self, client_id: str) -> None:
