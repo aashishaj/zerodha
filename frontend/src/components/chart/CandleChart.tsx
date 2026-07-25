@@ -355,7 +355,12 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     if (!containerRef.current || chartRef.current) return;
 
     const chart = createChart(containerRef.current, {
-      autoSize: true,
+      // Sized manually via the guarded ResizeObserver below. autoSize throws
+      // an internal "Value is null" when the container transiently reports a
+      // zero dimension during a layout reflow (e.g. resizing the window
+      // vertically in split view), which then crashes the whole app.
+      width: containerRef.current.clientWidth || 300,
+      height: containerRef.current.clientHeight || 200,
       layout: {
         background: { type: ColorType.Solid, color: "#ffffff" },
         textColor: "#7b8594",
@@ -473,7 +478,26 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     chart.subscribeCrosshairMove(handleCrosshairMove);
     chart.subscribeClick(handleClick);
 
+    // Guarded resize: only forward non-zero dimensions to the chart, and never
+    // let a transient resize error escape (it would reach window.onerror and
+    // replace the whole dashboard with the bootstrap-error screen).
+    const resizeObserver = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      const width = Math.floor(rect.width);
+      const height = Math.floor(rect.height);
+      if (width > 0 && height > 0) {
+        try {
+          chart.resize(width, height);
+        } catch {
+          // ignore transient resize state
+        }
+      }
+    });
+    resizeObserver.observe(containerRef.current);
+
     return () => {
+      resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
       chart.unsubscribeClick(handleClick);
       seriesRef.current = null;

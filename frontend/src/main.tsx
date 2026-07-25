@@ -21,16 +21,26 @@ const showBootstrapError = (message: string) => {
   `;
 };
 
+// Once React has mounted, a stray async error (e.g. a lightweight-charts resize
+// assertion) must NOT replace the whole running dashboard — log it and move on.
+// The full-screen bootstrap error is only for genuine pre-render startup failures.
+let booted = false;
+
 window.addEventListener("error", (event) => {
   const message = String(event.error?.message ?? event.message ?? "");
   // ResizeObserver loop notifications are benign browser behaviour, not real errors
   if (message.includes("ResizeObserver loop")) return;
+  if (booted) {
+    console.error("Runtime error (app kept running):", event.error ?? event.message);
+    return;
+  }
   console.error("Global bootstrap error:", event.error ?? event.message);
   showBootstrapError(message || "Unknown window error");
 });
 
 window.addEventListener("unhandledrejection", (event) => {
   console.error("Unhandled promise rejection:", event.reason);
+  if (booted) return;
   const message =
     event.reason instanceof Error ? event.reason.message : typeof event.reason === "string" ? event.reason : JSON.stringify(event.reason);
   showBootstrapError(message);
@@ -41,3 +51,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <App />
   </React.StrictMode>,
 );
+
+// Mark as booted after the first paint so early module/render errors still show
+// the bootstrap screen, but later runtime hiccups don't nuke the dashboard.
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    booted = true;
+  });
+});
