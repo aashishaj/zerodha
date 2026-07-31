@@ -354,6 +354,10 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return;
 
+    // TEMP diagnostic: detect remounts vs view-resets behind the zoom-collapse.
+    const diagId = Math.random().toString(36).slice(2, 7);
+    console.info("[chartdiag] MOUNT", diagId, viewKey);
+
     const chart = createChart(containerRef.current, {
       // Sized manually via the guarded ResizeObserver below. autoSize throws
       // an internal "Value is null" when the container transiently reports a
@@ -497,6 +501,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      console.info("[chartdiag] UNMOUNT", diagId, viewKey);
       resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
       chart.unsubscribeClick(handleClick);
@@ -627,6 +632,8 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     applyPriceScale();
 
     if (isNewView && curr > 0) {
+      // TEMP diagnostic: this is the branch that resets zoom to the default window.
+      console.info("[chartdiag] VIEW-RESET", viewKey, "prev=", prev, "curr=", curr, "fullReload=", didFullReload);
       timeScale.setVisibleLogicalRange({
         from: Math.max(0, curr - 80),
         to: curr + 2,
@@ -634,6 +641,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       lastFitViewKeyRef.current = viewKey;
     } else if (didFullReload && savedRange) {
       // Non-view-changing full reload: keep the user where they were panned/zoomed.
+      console.info("[chartdiag] full-reload (range preserved)", viewKey, "appendOnly=", appendOnly);
       timeScale.setVisibleLogicalRange(savedRange);
     }
   }, [normalized.chartData, viewKey]);
