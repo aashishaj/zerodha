@@ -123,11 +123,16 @@ export const ChartPane = memo(function ChartPane({
     if (!instrument) return;
     const token = instrument.instrument_token;
     const source = new EventSource(`/api/ticks/stream?tokens=${token}`);
+    console.info("[ticks] opening stream for", token);
+
+    source.onopen = () => console.info("[ticks] OPEN", token);
+    source.onerror = () => console.warn("[ticks] ERROR/closed", token, "readyState=", source.readyState);
 
     source.onmessage = (event) => {
       try {
         const tick = JSON.parse(event.data as string) as { instrument_token: number; last_price: number };
         if (tick.instrument_token === token && tick.last_price) {
+          console.debug("[ticks] tick", token, tick.last_price);
           chartRef.current?.applyTick(tick.last_price);
         }
       } catch {

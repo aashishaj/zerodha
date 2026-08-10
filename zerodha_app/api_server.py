@@ -898,15 +898,22 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 client_id, tick_queue = broadcaster.connect_client(tokens)
                 try:
                     self.send_response(200)
-                    self.send_header("Content-Type", "text/event-stream")
-                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                    # no-transform stops Cloudflare (and any proxy) from compressing
+                    # and therefore buffering the stream — without it, ticks arrive
+                    # in delayed batches instead of in real time.
+                    self.send_header("Cache-Control", "no-cache, no-transform")
                     self.send_header("Connection", "keep-alive")
                     self.send_header("Access-Control-Allow-Origin", FRONTEND_URL)
                     self.send_header("X-Accel-Buffering", "no")
                     self.end_headers()
+                    # Flush a comment immediately so proxies/browser register the
+                    # stream as live right away and the client reconnects fast.
+                    self.wfile.write(b"retry: 2000\n: connected\n\n")
+                    self.wfile.flush()
                     while True:
                         try:
-                            tick = tick_queue.get(timeout=20)
+                            tick = tick_queue.get(timeout=15)
                             self.wfile.write(f"data: {json.dumps(tick)}\n\n".encode())
                             self.wfile.flush()
                         except queue.Empty:
