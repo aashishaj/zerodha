@@ -38,7 +38,8 @@ export interface CandleChartHandle {
   resetView: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
-  applyTick: (price: number) => void;
+  // Returns the forming bar's OHLC so callers can update a live header readout.
+  applyTick: (price: number) => { open: number; high: number; low: number; close: number } | null;
 }
 
 interface CandleChartProps {
@@ -296,11 +297,11 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     applyTick(price: number) {
       const series = seriesRef.current;
       const candles = cleanedCandlesRef.current;
-      if (!series || candles.length === 0) return;
+      if (!series || candles.length === 0) return null;
 
       const lastCandle = candles[candles.length - 1];
       const lastHistTs = toChartTimestamp(lastCandle.time);
-      if (lastHistTs === null) return;
+      if (lastHistTs === null) return null;
 
       // Interval (seconds) inferred from the two most recent historical bars.
       let step = 60;
@@ -348,6 +349,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
         low: bar.low,
         close: bar.close,
       });
+      return { open: bar.open, high: bar.high, low: bar.low, close: bar.close };
     },
   }));
 

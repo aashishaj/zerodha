@@ -132,8 +132,15 @@ export const ChartPane = memo(function ChartPane({
       try {
         const tick = JSON.parse(event.data as string) as { instrument_token: number; last_price: number };
         if (tick.instrument_token === token && tick.last_price) {
-          console.debug("[ticks] tick", token, tick.last_price);
-          chartRef.current?.applyTick(tick.last_price);
+          const bar = chartRef.current?.applyTick(tick.last_price);
+          // Keep the OHLC header live too — otherwise it stays frozen on the
+          // last poll value while the candle itself moves with each tick.
+          if (bar && !hoveringRef.current) {
+            if (oRef.current) oRef.current.textContent = formatPrice(bar.open);
+            if (hRef.current) hRef.current.textContent = formatPrice(bar.high);
+            if (lRef.current) lRef.current.textContent = formatPrice(bar.low);
+            if (cRef.current) cRef.current.textContent = formatPrice(bar.close);
+          }
         }
       } catch {
         // ignore malformed frames
@@ -154,8 +161,13 @@ export const ChartPane = memo(function ChartPane({
   const latestCandleRef = useRef<Candle | undefined>(undefined);
   latestCandleRef.current = candles[candles.length - 1];
 
+  // True while the crosshair is over a bar, so live ticks don't overwrite the
+  // header the user is inspecting.
+  const hoveringRef = useRef(false);
+
   // Stable callback — no dependencies, reads latestCandleRef at call time
   const handleHoverCandle = useCallback((candle: Candle | null) => {
+    hoveringRef.current = candle != null;
     const src = candle ?? latestCandleRef.current ?? null;
     if (oRef.current) oRef.current.textContent = formatPrice(src?.open);
     if (hRef.current) hRef.current.textContent = formatPrice(src?.high);
