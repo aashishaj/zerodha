@@ -118,36 +118,67 @@ export const ChartPane = memo(function ChartPane({
   const sidesRef = useRef({ canBuy, canSell });
   sidesRef.current = { canBuy, canSell };
 
-  // Live tick stream — open an SSE connection per instrument for real-time price updates
+  // Live tick stream — an SSE connection per instrument for real-time updates.
+  // The browser's built-in EventSource reconnect gives up on some errors (and
+  // Cloudflare occasionally drops long-lived streams), which silently stops
+  // ticks and drops the chart back to the slow poll. So we manage reconnection
+  // ourselves: on any error/close, recreate the connection after a short delay.
   useEffect(() => {
     if (!instrument) return;
     const token = instrument.instrument_token;
-    const source = new EventSource(`/api/ticks/stream?tokens=${token}`);
-    console.info("[ticks] opening stream for", token);
+    let source: EventSource | null = null;
+    let reconnectTimer: number | null = null;
+    let closed = false;
 
-    source.onopen = () => console.info("[ticks] OPEN", token);
-    source.onerror = () => console.warn("[ticks] ERROR/closed", token, "readyState=", source.readyState);
-
-    source.onmessage = (event) => {
-      try {
-        const tick = JSON.parse(event.data as string) as { instrument_token: number; last_price: number };
-        if (tick.instrument_token === token && tick.last_price) {
-          const bar = chartRef.current?.applyTick(tick.last_price);
-          // Keep the OHLC header live too — otherwise it stays frozen on the
-          // last poll value while the candle itself moves with each tick.
-          if (bar && !hoveringRef.current) {
-            if (oRef.current) oRef.current.textContent = formatPrice(bar.open);
-            if (hRef.current) hRef.current.textContent = formatPrice(bar.high);
-            if (lRef.current) lRef.current.textContent = formatPrice(bar.low);
-            if (cRef.current) cRef.current.textContent = formatPrice(bar.close);
-          }
-        }
-      } catch {
-        // ignore malformed frames
-      }
+    const scheduleReconnect = () => {
+      if (closed || reconnectTimer != null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, 2000);
     };
 
-    return () => source.close();
+    const connect = () => {
+      if (closed) return;
+      source = new EventSource(`/api/ticks/stream?tokens=${token}`);
+      console.info("[ticks] connecting", token);
+
+      source.onopen = () => console.info("[ticks] OPEN", token);
+
+      source.onerror = () => {
+        console.warn("[ticks] dropped — reconnecting", token);
+        source?.close();
+        source = null;
+        scheduleReconnect();
+      };
+
+      source.onmessage = (event) => {
+        try {
+          const tick = JSON.parse(event.data as string) as { instrument_token: number; last_price: number };
+          if (tick.instrument_token === token && tick.last_price) {
+            const bar = chartRef.current?.applyTick(tick.last_price);
+            // Keep the OHLC header live too — otherwise it stays frozen on the
+            // last poll value while the candle itself moves with each tick.
+            if (bar && !hoveringRef.current) {
+              if (oRef.current) oRef.current.textContent = formatPrice(bar.open);
+              if (hRef.current) hRef.current.textContent = formatPrice(bar.high);
+              if (lRef.current) lRef.current.textContent = formatPrice(bar.low);
+              if (cRef.current) cRef.current.textContent = formatPrice(bar.close);
+            }
+          }
+        } catch {
+          // ignore malformed frames
+        }
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer != null) window.clearTimeout(reconnectTimer);
+      source?.close();
+    };
   }, [instrument]);
 
   // DOM refs for OHLC values — updated directly, zero React re-renders on hover
@@ -164,6 +195,24 @@ export const ChartPane = memo(function ChartPane({
   // True while the crosshair is over a bar, so live ticks don't overwrite the
   // header the user is inspecting.
   const hoveringRef = useRef(false);
+
+  // Write a live forming bar into the OHLC header (unless the user is hovering).
+  const writeHeader = useCallback((bar: { open: number; high: number; low: number; close: number } | null | undefined) => {
+    if (!bar || hoveringRef.current) return;
+    if (oRef.current) oRef.current.textContent = formatPrice(bar.open);
+    if (hRef.current) hRef.current.textContent = formatPrice(bar.high);
+    if (lRef.current) lRef.current.textContent = formatPrice(bar.low);
+    if (cRef.current) cRef.current.textContent = formatPrice(bar.close);
+  }, []);
+
+  // Fallback: also nudge the forming candle from the 5s quote poll, so the chart
+  // stays current even during an SSE gap. Harmless alongside the live ticks —
+  // applyTick just advances the same forming bar to the latest price.
+  useEffect(() => {
+    const price = quote?.last_price;
+    if (!price) return;
+    writeHeader(chartRef.current?.applyTick(price));
+  }, [quote?.last_price, writeHeader]);
 
   // Stable callback — no dependencies, reads latestCandleRef at call time
   const handleHoverCandle = useCallback((candle: Candle | null) => {
