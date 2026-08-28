@@ -9,7 +9,9 @@ from zerodha_app.api_server import (
     TickBroadcaster,
     ZerodhaFrontendAPI,
     _expand_minute_rows,
+    _ist_now,
     _json_default,
+    _parse_datetime_param,
     _normalize_candle,
     _normalize_instrument_payload,
     _quote_key_for_instrument,
@@ -511,3 +513,27 @@ class TickBroadcasterTests(unittest.TestCase):
         b.connect_client([333])
         self.assertEqual(fake.subscribed, [333])
         self.assertEqual(b._subscribed, {333})
+
+
+class DatetimeParamTests(unittest.TestCase):
+    def test_ist_offset_is_stripped_to_naive_ist(self):
+        # The frontend sends candle times with +05:30; they must become naive IST
+        # so they compare cleanly with _ist_now() (also naive IST) — otherwise a
+        # tz-aware from vs a UTC to made from > to and forced the 7-day fallback.
+        parsed = _parse_datetime_param("2026-08-28T12:52:00+05:30")
+        self.assertIsNone(parsed.tzinfo)
+        self.assertEqual(parsed.hour, 12)
+        self.assertEqual(parsed.minute, 52)
+
+    def test_utc_offset_is_converted_to_ist(self):
+        # 07:22 UTC == 12:52 IST
+        parsed = _parse_datetime_param("2026-08-28T07:22:00+00:00")
+        self.assertIsNone(parsed.tzinfo)
+        self.assertEqual((parsed.hour, parsed.minute), (12, 52))
+
+    def test_naive_passthrough_and_none(self):
+        self.assertEqual(_parse_datetime_param("2026-08-28T12:52:00").hour, 12)
+        self.assertIsNone(_parse_datetime_param(None))
+
+    def test_ist_now_is_naive(self):
+        self.assertIsNone(_ist_now().tzinfo)

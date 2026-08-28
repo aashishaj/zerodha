@@ -553,6 +553,10 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
           crosshairMarkerVisible: false,
           title: "",
           visible: instance.enabled,
+          // Keep indicators OUT of the vertical auto-scale so the candles fill
+          // the pane (like Zerodha). A VWAP far from price would otherwise
+          // stretch the range and squish the candles into a sliver.
+          autoscaleInfoProvider: () => null,
         });
         refs[instance.id] = series;
       } else {

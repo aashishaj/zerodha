@@ -8,7 +8,7 @@ import queue
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -489,7 +489,7 @@ class ZerodhaFrontendAPI:
             raise ValueError(f"Unsupported interval `{interval}`.")
 
         kite = self._get_kite()
-        to_time = _parse_datetime_param(to_value) or datetime.now()
+        to_time = _parse_datetime_param(to_value) or _ist_now()
         from_time = _parse_datetime_param(from_value) or (to_time - _interval_window(interval))
         source_interval = _source_interval(interval)
         rows = _load_history_with_fallback(
@@ -1484,10 +1484,23 @@ def _normalize_candle(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Indian market clock. Kite works in IST; the frontend sends candle times with
+# a +05:30 offset, so we normalise everything to naive IST to compare cleanly.
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _ist_now() -> datetime:
+    return datetime.now(_IST).replace(tzinfo=None)
+
+
 def _parse_datetime_param(value: str | None) -> datetime | None:
     if not value:
         return None
-    return datetime.fromisoformat(value)
+    parsed = datetime.fromisoformat(value)
+    # Drop the offset to a naive IST wall-clock so it compares with _ist_now().
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(_IST).replace(tzinfo=None)
+    return parsed
 
 
 def _interval_window(interval: str) -> timedelta:
