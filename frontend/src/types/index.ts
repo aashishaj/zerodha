@@ -46,7 +46,9 @@ export interface IndicatorInstance {
 }
 
 export interface SLSettings {
-  /** Default order quantity (shares / lots) */
+  /** Exchange lot size — the unit every order quantity moves in */
+  lotSize: number;
+  /** Quantity the order ticket opens at; a whole multiple of lotSize */
   defaultQty: number;
   /** Points added above High for BUY SL trigger price */
   buyTriggerOffset: number;

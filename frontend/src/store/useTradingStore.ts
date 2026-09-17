@@ -220,9 +220,13 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   activePaneId: "primary",
   isWatchlistCollapsed: localStorage.getItem("watchlistCollapsed") === "true",
   slSettings: ((): SLSettings => {
-    const defaults = { defaultQty: 65, buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
+    const defaults = { lotSize: 65, defaultQty: 65, buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5 };
     try {
-      return JSON.parse(localStorage.getItem("slSettings") ?? "null") as SLSettings ?? defaults;
+      // Merge OVER the defaults rather than replacing them: settings saved
+      // before a key existed would otherwise load that key as undefined and
+      // leave the order ticket with a NaN step.
+      const stored = JSON.parse(localStorage.getItem("slSettings") ?? "null") as Partial<SLSettings> | null;
+      return stored ? { ...defaults, ...stored } : defaults;
     } catch {
       return defaults;
     }

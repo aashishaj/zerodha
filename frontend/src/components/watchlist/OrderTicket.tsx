@@ -4,6 +4,7 @@ import type { Instrument, OrderSide, OrderTicketPayload, OrderType, ProductType,
 import { useTradingStore } from "../../store/useTradingStore";
 import { useAllowedSides } from "../../store/useAuthStore";
 import { formatInstrumentLabel, formatPrice } from "../../utils/format";
+import { isWholeMultiple, snapToStep } from "../../utils/quantity";
 
 interface OrderTicketProps {
   open: boolean;
@@ -18,12 +19,6 @@ const THEME = {
   BUY:  { headerBg: "#387ed1", btnBg: "#387ed1", label: "Buy"  },
   SELL: { headerBg: "#e5793b", btnBg: "#e5793b", label: "Sell" },
 } as const;
-
-/** Nearest whole multiple of `step`, never below a single step. */
-function snapToStep(value: number, step: number): number {
-  if (!Number.isFinite(value) || value <= 0) return step;
-  return Math.max(step, Math.round(value / step) * step);
-}
 
 function productLabel(p: ProductType) {
   if (p === "MIS")  return "Intraday (MIS)";
@@ -42,11 +37,13 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   }, [instrument]);
 
   const slSettings = useTradingStore((s) => s.slSettings);
-  // Quantity moves in whole multiples of the profile default — 65 → 130 → 195 —
-  // so that default doubles as both the step and the minimum. Deliberately NOT
-  // raised to the instrument's lot size: the profile default is the trading
-  // unit here, and letting a 75-lot option silently override 65 was the bug.
-  const qtyStep = Math.max(1, Math.round(slSettings.defaultQty));
+  // Quantity moves in whole lots — 65 → 130 → 195 — so the configured lot size
+  // is both the step and the minimum, while the profile default only decides
+  // where the ticket opens. Deliberately NOT raised to the instrument's own
+  // lot_size: letting a 75-lot option silently override the configured 65 was
+  // the bug this replaced.
+  const qtyStep  = Math.max(1, Math.round(slSettings.lotSize));
+  const startQty = snapToStep(slSettings.defaultQty, qtyStep);
 
   const products = useMemo<ProductType[]>(() => {
     if (!instrument) return ["MIS", "CNC"];
@@ -68,7 +65,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   const [product,     setProduct]     = useState<ProductType>("MIS");
   const [orderType,   setOrderType]   = useState<OrderType>("LIMIT");
   const [validity,    setValidity]    = useState<"DAY" | "IOC">("DAY");
-  const [quantity,    setQuantity]    = useState(qtyStep);
+  const [quantity,    setQuantity]    = useState(startQty);
   const [price,       setPrice]       = useState("");
   const [triggerPrice,setTriggerPrice]= useState("");
   const [submitting,  setSubmitting]  = useState(false);
@@ -93,7 +90,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   // The quantity has to land on a whole multiple of the step. Blur snapping
   // handles the common case; this catches a value submitted while the field is
   // still focused, and any odd quantity arriving from elsewhere.
-  const qtyValid = Number.isInteger(quantity) && quantity > 0 && quantity % qtyStep === 0;
+  const qtyValid = isWholeMultiple(quantity, qtyStep);
 
   // Stable refs for values that must NOT re-trigger the reset.
   // quote and prefill update frequently (quotes every 5 s); they should only be
@@ -117,7 +114,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     setActiveTab("Regular");
     setProduct(defaultProduct);
     setOrderType(nextOrderType);
-    setQuantity(qtyStep);
+    setQuantity(startQty);
     setPrice(p?.price != null ? String(p.price) : q?.last_price ? String(q.last_price) : "");
     setTriggerPrice(p?.triggerPrice != null ? String(p.triggerPrice) : "");
     setValidity("DAY");

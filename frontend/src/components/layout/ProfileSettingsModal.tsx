@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTradingStore } from "../../store/useTradingStore";
+import { isWholeMultiple, snapToStep } from "../../utils/quantity";
 
 interface Props {
   onClose: () => void;
@@ -40,7 +41,15 @@ export function ProfileSettingsModal({ onClose }: Props) {
   const slSettings   = useTradingStore((s) => s.slSettings);
   const setSLSettings = useTradingStore((s) => s.setSLSettings);
 
+  const [lotSize,    setLotSize]    = useState(String(slSettings.lotSize));
   const [defaultQty, setDefaultQty] = useState(String(slSettings.defaultQty));
+
+  // The lot size drives the default-qty field's step, so it has to be usable
+  // even while the lot-size input is mid-edit or empty.
+  // Any non-positive or unparseable entry falls back to 65 rather than to 1,
+  // which would quietly drop the lot constraint altogether.
+  const lotStep = Math.round(Number(lotSize)) > 0 ? Math.round(Number(lotSize)) : 65;
+  const defaultQtyValid = isWholeMultiple(Number(defaultQty), lotStep);
   const [buyTrig,    setBuyTrig]    = useState(String(slSettings.buyTriggerOffset));
   const [buyPrice,   setBuyPrice]   = useState(String(slSettings.buyPriceOffset));
   const [selTrig,    setSelTrig]    = useState(String(slSettings.sellTriggerOffset));
@@ -64,7 +73,8 @@ export function ProfileSettingsModal({ onClose }: Props) {
 
   const handleSave = () => {
     setSLSettings({
-      defaultQty:        Math.max(1, Math.round(Number(defaultQty)) || 65),
+      lotSize:           lotStep,
+      defaultQty:        snapToStep(Math.round(Number(defaultQty)), lotStep),
       buyTriggerOffset:  Math.max(0, Number(buyTrig)  || 2),
       buyPriceOffset:    Math.max(0, Number(buyPrice) || 2.5),
       sellTriggerOffset: Math.max(0, Number(selTrig)  || 2),
@@ -94,22 +104,52 @@ export function ProfileSettingsModal({ onClose }: Props) {
         </div>
       </div>
 
-      {/* Default Qty */}
-      <div className="border-b border-[#f0f2f5] px-4 py-3">
-        <div className="mb-1.5 text-[11px] font-semibold text-[#9aa3af]">DEFAULT QTY (SHARES)</div>
-        <div className="mb-1.5 text-[10px] text-[#9aa3af]">
-          Also the order ticket&rsquo;s step &mdash; quantity moves 65 &rarr; 130 &rarr; 195.
+      {/* Lot size sets the unit every quantity moves in; the default only says
+          where the order ticket opens, so it must land on a whole lot. */}
+      <div className="space-y-3 border-b border-[#f0f2f5] px-4 py-3">
+        <div>
+          <div className="mb-1.5 text-[11px] font-semibold text-[#9aa3af]">LOT SIZE (SHARES)</div>
+          <div className="mb-1.5 text-[10px] text-[#9aa3af]">
+            The step every quantity moves in &mdash; {lotStep} &rarr; {lotStep * 2} &rarr; {lotStep * 3}.
+          </div>
+          <input
+            type="number"
+            step="1"
+            min="1"
+            value={lotSize}
+            onChange={(e) => setLotSize(e.target.value)}
+            className="h-8 w-full rounded-[2px] border border-[#d0d3d8] px-2 text-[13px] text-[#333] focus:outline-none"
+            onFocus={(e) => (e.currentTarget.style.borderColor = "#387ed1")}
+            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d3d8")}
+          />
         </div>
-        <input
-          type="number"
-          step="1"
-          min="1"
-          value={defaultQty}
-          onChange={(e) => setDefaultQty(e.target.value)}
-          className="h-8 w-full rounded-[2px] border border-[#d0d3d8] px-2 text-[13px] text-[#333] focus:outline-none"
-          onFocus={(e) => (e.currentTarget.style.borderColor = "#387ed1")}
-          onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d3d8")}
-        />
+
+        <div>
+          <div className="mb-1.5 text-[11px] font-semibold text-[#9aa3af]">DEFAULT QTY (SHARES)</div>
+          <div className="mb-1.5 text-[10px] text-[#9aa3af]">
+            Where the order ticket opens. Must be a whole number of lots.
+          </div>
+          <input
+            type="number"
+            step={lotStep}
+            min={lotStep}
+            value={defaultQty}
+            onChange={(e) => setDefaultQty(e.target.value)}
+            className="h-8 w-full rounded-[2px] border px-2 text-[13px] text-[#333] focus:outline-none"
+            style={{ borderColor: defaultQtyValid ? "#d0d3d8" : "#f87171" }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = "#387ed1")}
+            // Snap on the way out so the saved value is always a whole lot.
+            onBlur={(e) => {
+              setDefaultQty(String(snapToStep(Number(defaultQty), lotStep)));
+              e.currentTarget.style.borderColor = "#d0d3d8";
+            }}
+          />
+          {!defaultQtyValid && (
+            <div className="mt-1 text-[10px] text-red-600">
+              Must be a multiple of {lotStep}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* SL offset settings */}
