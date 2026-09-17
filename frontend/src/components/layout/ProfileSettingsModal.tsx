@@ -41,14 +41,15 @@ export function ProfileSettingsModal({ onClose }: Props) {
   const slSettings   = useTradingStore((s) => s.slSettings);
   const setSLSettings = useTradingStore((s) => s.setSLSettings);
 
-  const [lotSize,    setLotSize]    = useState(String(slSettings.lotSize));
   const [defaultQty, setDefaultQty] = useState(String(slSettings.defaultQty));
 
-  // The lot size drives the default-qty field's step, so it has to be usable
-  // even while the lot-size input is mid-edit or empty.
-  // Any non-positive or unparseable entry falls back to 65 rather than to 1,
-  // which would quietly drop the lot constraint altogether.
-  const lotStep = Math.round(Number(lotSize)) > 0 ? Math.round(Number(lotSize)) : 65;
+  // The lot size is the unit every quantity moves in. It has no field of its
+  // own by choice, but it stays in settings rather than being hardcoded here
+  // and in the order ticket, so a lot-size change is a one-line edit. Guard
+  // the stored value in case it was ever written as junk — falling back to 65
+  // rather than to 1, which would quietly drop the lot constraint altogether.
+  const storedLot = Math.round(Number(slSettings.lotSize));
+  const lotStep = storedLot > 0 ? storedLot : 65;
   const defaultQtyValid = isWholeMultiple(Number(defaultQty), lotStep);
   const [buyTrig,    setBuyTrig]    = useState(String(slSettings.buyTriggerOffset));
   const [buyPrice,   setBuyPrice]   = useState(String(slSettings.buyPriceOffset));
@@ -104,30 +105,12 @@ export function ProfileSettingsModal({ onClose }: Props) {
         </div>
       </div>
 
-      {/* Lot size sets the unit every quantity moves in; the default only says
-          where the order ticket opens, so it must land on a whole lot. */}
-      <div className="space-y-3 border-b border-[#f0f2f5] px-4 py-3">
-        <div>
-          <div className="mb-1.5 text-[11px] font-semibold text-[#9aa3af]">LOT SIZE (SHARES)</div>
-          <div className="mb-1.5 text-[10px] text-[#9aa3af]">
-            The step every quantity moves in &mdash; {lotStep} &rarr; {lotStep * 2} &rarr; {lotStep * 3}.
-          </div>
-          <input
-            type="number"
-            step="1"
-            min="1"
-            value={lotSize}
-            onChange={(e) => setLotSize(e.target.value)}
-            className="h-8 w-full rounded-[2px] border border-[#d0d3d8] px-2 text-[13px] text-[#333] focus:outline-none"
-            onFocus={(e) => (e.currentTarget.style.borderColor = "#387ed1")}
-            onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d3d8")}
-          />
-        </div>
-
+      {/* Default Qty — where the order ticket opens, in whole lots. */}
+      <div className="border-b border-[#f0f2f5] px-4 py-3">
         <div>
           <div className="mb-1.5 text-[11px] font-semibold text-[#9aa3af]">DEFAULT QTY (SHARES)</div>
           <div className="mb-1.5 text-[10px] text-[#9aa3af]">
-            Where the order ticket opens. Must be a whole number of lots.
+            Moves in steps of {lotStep} &mdash; {lotStep} &rarr; {lotStep * 2} &rarr; {lotStep * 3}.
           </div>
           <input
             type="number"
