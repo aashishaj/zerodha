@@ -64,7 +64,7 @@ export function ProfileSettingsModal({ onClose }: Props) {
 
   const handleSave = () => {
     setSLSettings({
-      defaultQty:        Math.max(1, Number(defaultQty) || 65),
+      defaultQty:        Math.max(1, Math.round(Number(defaultQty)) || 65),
       buyTriggerOffset:  Math.max(0, Number(buyTrig)  || 2),
       buyPriceOffset:    Math.max(0, Number(buyPrice) || 2.5),
       sellTriggerOffset: Math.max(0, Number(selTrig)  || 2),
@@ -97,6 +97,9 @@ export function ProfileSettingsModal({ onClose }: Props) {
       {/* Default Qty */}
       <div className="border-b border-[#f0f2f5] px-4 py-3">
         <div className="mb-1.5 text-[11px] font-semibold text-[#9aa3af]">DEFAULT QTY (SHARES)</div>
+        <div className="mb-1.5 text-[10px] text-[#9aa3af]">
+          Also the order ticket&rsquo;s step &mdash; quantity moves 65 &rarr; 130 &rarr; 195.
+        </div>
         <input
           type="number"
           step="1"

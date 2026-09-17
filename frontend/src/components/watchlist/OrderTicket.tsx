@@ -19,6 +19,12 @@ const THEME = {
   SELL: { headerBg: "#e5793b", btnBg: "#e5793b", label: "Sell" },
 } as const;
 
+/** Nearest whole multiple of `step`, never below a single step. */
+function snapToStep(value: number, step: number): number {
+  if (!Number.isFinite(value) || value <= 0) return step;
+  return Math.max(step, Math.round(value / step) * step);
+}
+
 function productLabel(p: ProductType) {
   if (p === "MIS")  return "Intraday (MIS)";
   if (p === "CNC")  return "Overnight (CNC)";
@@ -36,15 +42,11 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   }, [instrument]);
 
   const slSettings = useTradingStore((s) => s.slSettings);
-  const defaultQty = useMemo(() => {
-    if (!instrument) return slSettings.defaultQty;
-    const seg = instrument.segment;
-    // For derivatives, use lot size if greater; for equities use profile default qty
-    if (seg === "NFO-OPT" || seg === "NFO-FUT") {
-      return Math.max(slSettings.defaultQty, instrument.lot_size);
-    }
-    return slSettings.defaultQty;
-  }, [instrument, slSettings]);
+  // Quantity moves in whole multiples of the profile default — 65 → 130 → 195 —
+  // so that default doubles as both the step and the minimum. Deliberately NOT
+  // raised to the instrument's lot size: the profile default is the trading
+  // unit here, and letting a 75-lot option silently override 65 was the bug.
+  const qtyStep = Math.max(1, Math.round(slSettings.defaultQty));
 
   const products = useMemo<ProductType[]>(() => {
     if (!instrument) return ["MIS", "CNC"];
@@ -66,7 +68,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   const [product,     setProduct]     = useState<ProductType>("MIS");
   const [orderType,   setOrderType]   = useState<OrderType>("LIMIT");
   const [validity,    setValidity]    = useState<"DAY" | "IOC">("DAY");
-  const [quantity,    setQuantity]    = useState(1);
+  const [quantity,    setQuantity]    = useState(qtyStep);
   const [price,       setPrice]       = useState("");
   const [triggerPrice,setTriggerPrice]= useState("");
   const [submitting,  setSubmitting]  = useState(false);
@@ -87,6 +89,11 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   const requiredMargin = effectivePrice * quantity;
   const insufficient =
     currentSide === "BUY" && availableCash != null && requiredMargin > availableCash;
+
+  // The quantity has to land on a whole multiple of the step. Blur snapping
+  // handles the common case; this catches a value submitted while the field is
+  // still focused, and any odd quantity arriving from elsewhere.
+  const qtyValid = Number.isInteger(quantity) && quantity > 0 && quantity % qtyStep === 0;
 
   // Stable refs for values that must NOT re-trigger the reset.
   // quote and prefill update frequently (quotes every 5 s); they should only be
@@ -110,7 +117,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     setActiveTab("Regular");
     setProduct(defaultProduct);
     setOrderType(nextOrderType);
-    setQuantity(defaultQty);
+    setQuantity(qtyStep);
     setPrice(p?.price != null ? String(p.price) : q?.last_price ? String(q.last_price) : "");
     setTriggerPrice(p?.triggerPrice != null ? String(p.triggerPrice) : "");
     setValidity("DAY");
@@ -138,6 +145,10 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
 
   const handleSubmit = async () => {
     if (!instrument) return;
+    if (!qtyValid) {
+      setMessage({ text: `Quantity must be a multiple of ${qtyStep}.`, ok: false });
+      return;
+    }
     setSubmitting(true);
     setMessage(null);
     try {
@@ -278,11 +289,24 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
             </label>
             <input
               type="number"
-              min={1}
+              min={qtyStep}
+              step={qtyStep}
               value={quantity}
-              onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
-              className="h-9 w-full rounded-[2px] border border-[#d0d3d8] bg-white px-3 text-[13px] text-[#222] focus:border-[#387ed1] focus:outline-none"
+              // Unclamped while typing so "130" can be reached a digit at a
+              // time; snapped to the nearest whole multiple once focus leaves.
+              onChange={(e) => setQuantity(Number(e.target.value))}
+              onBlur={() => setQuantity(snapToStep(quantity, qtyStep))}
+              className={`h-9 w-full rounded-[2px] border bg-white px-3 text-[13px] text-[#222] focus:outline-none ${
+                qtyValid
+                  ? "border-[#d0d3d8] focus:border-[#387ed1]"
+                  : "border-red-400 focus:border-red-500"
+              }`}
             />
+            {!qtyValid && (
+              <div className="mt-1 text-[11px] text-red-600">
+                Must be a multiple of {qtyStep}
+              </div>
+            )}
           </div>
 
           {/* Price */}
@@ -402,7 +426,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
           </button>
           <button
             onClick={() => void handleSubmit()}
-            disabled={submitting}
+            disabled={submitting || !qtyValid}
             className="rounded-[2px] px-7 py-2 text-[13px] font-semibold text-white transition-opacity disabled:opacity-60"
             style={{ backgroundColor: theme.btnBg }}
           >
