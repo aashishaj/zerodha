@@ -154,7 +154,19 @@ export interface OrderTicketPayload {
   validity: OrderValidity;
 }
 
-export type OrderStatus = "PENDING" | "FILLED" | "REJECTED" | "CANCELLED";
+/**
+ * Kite's own order statuses. COMPLETE, CANCELLED and REJECTED are terminal;
+ * OPEN, TRIGGER PENDING and the transient *PENDING states are still live.
+ * Left open rather than a closed union because Kite has more of them than is
+ * worth enumerating and these values arrive unvalidated from the API.
+ */
+export type OrderStatus =
+  | "OPEN"
+  | "COMPLETE"
+  | "CANCELLED"
+  | "REJECTED"
+  | "TRIGGER PENDING"
+  | (string & {});
 
 export interface Order {
   order_id: string | number;
@@ -167,6 +179,8 @@ export interface Order {
   order_type: OrderType;
   product: ProductType;
   validity: OrderValidity;
+  /** Kite order variety (regular / co / amo / iceberg). Required to cancel. */
+  variety?: string;
   status: OrderStatus;
   /** Zerodha's explanation for REJECTED/CANCELLED orders. */
   status_message?: string | null;

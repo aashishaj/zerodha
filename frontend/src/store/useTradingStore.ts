@@ -137,6 +137,7 @@ interface TradingState {
     trigger_price?: number;
   }) => Promise<{ order_id: string }>;
   fetchOrders: () => Promise<void>;
+  cancelOrder: (order: Order) => Promise<void>;
   ordersError: boolean;
   holdings: Holding[];
   fetchHoldings: () => Promise<void>;
@@ -513,6 +514,16 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       await get().fetchOrders();
     }
     return { order_id: result.order_id };
+  },
+  async cancelOrder(order) {
+    // The variety has to be the one the order was placed under or Kite refuses
+    // the cancel. Refetch afterwards rather than patching the row locally:
+    // Kite cancels asynchronously, so the authoritative status is its own.
+    await orderService.cancelOrder({
+      order_id: String(order.order_id),
+      variety: order.variety,
+    });
+    await get().fetchOrders();
   },
   async fetchOrders() {
     try {

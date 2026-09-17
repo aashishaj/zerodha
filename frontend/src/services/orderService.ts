@@ -17,6 +17,11 @@ export const orderService = {
     return resp.data;
   },
 
+  async cancelOrder(payload: { order_id: string; variety?: string }): Promise<{ ok: boolean; message: string }> {
+    const resp = await apiClient.post("/orders/cancel", payload);
+    return resp.data;
+  },
+
   async getOrders(): Promise<{ ok: boolean; orders: Order[] }> {
     const resp = await apiClient.get("/orders/list");
     return resp.data;

@@ -612,6 +612,27 @@ class ZerodhaFrontendAPI:
             "order_id": order_id,
         }
 
+    def cancel_order(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Cancel a pending order.
+
+        The variety has to match the one the order was placed under or Kite
+        rejects the call, so it is taken from the order row the caller holds
+        rather than assumed, falling back to regular. Kite processes the
+        cancellation asynchronously: a success here means it was accepted for
+        cancellation, not that it has already left the book.
+        """
+        kite = self._get_kite()
+        order_id = str(payload.get("order_id") or "").strip()
+        if not order_id:
+            raise ValueError("order_id is required to cancel an order.")
+        variety = str(payload.get("variety") or "").strip() or kite.VARIETY_REGULAR
+        kite.cancel_order(variety=variety, order_id=order_id)
+        return {
+            "ok": True,
+            "message": f"Cancellation requested for order {order_id}.",
+            "order_id": order_id,
+        }
+
     def get_orders(self) -> dict[str, Any]:
         kite = self._get_kite()
         orders = kite.orders()
@@ -1282,6 +1303,16 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 if parsed.path == "/api/watchlist":
                     self._send_json(api.save_watchlist(self._read_json()))
                     return
+                if parsed.path == "/api/orders/cancel":
+                    body = self._read_json()
+                    if not role_can_cancel(user["role"]):
+                        self._send_json(
+                            {"ok": False, "error": f"Your role ({user['role']}) cannot cancel orders."},
+                            status=403,
+                        )
+                        return
+                    self._send_json(api.cancel_order(body))
+                    return
                 if parsed.path == "/api/orders":
                     body = self._read_json()
                     side = str(body.get("side") or "BUY").strip().upper()
@@ -1448,6 +1479,18 @@ def role_allows_side(role: str, side: str, order_type: str = "") -> bool:
     if _is_protective_stop(order_type):
         return True
     return side == ("BUY" if role == "buyer" else "SELL")
+
+
+def role_can_cancel(role: str) -> bool:
+    """Whether a role may cancel an order.
+
+    A cancellation has no side, so the gating in :func:`role_allows_side` does
+    not apply here — the only question is whether the role trades at all. A
+    seller has to be able to pull their own resting stop; routing that through
+    an admin would leave orders stranded on the exchange. Unknown roles, which
+    cannot place an order in the first place, get nothing.
+    """
+    return role in ("buyer", "seller", "trader", "super_admin")
 
 
 def _normalize_instrument_payload(row: dict[str, Any]) -> dict[str, Any] | None:

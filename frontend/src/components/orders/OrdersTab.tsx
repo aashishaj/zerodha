@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Notebook, History, AlertCircle } from "lucide-react";
 import { formatPrice } from "../../utils/format";
+import { isOrderCancellable } from "../../utils/orders";
 import { useTradingStore } from "../../store/useTradingStore";
 
 type OrdersSubTab = "orders" | "gtt";
@@ -20,7 +21,27 @@ const STATUS_COLOR: Record<string, string> = {
 
 export function OrdersTab() {
   const [activeSubTab, setActiveSubTab] = useState<OrdersSubTab>("orders");
-  const { orders, fetchOrders, ordersError } = useTradingStore();
+  const { orders, fetchOrders, ordersError, cancelOrder } = useTradingStore();
+  // Which order id is mid-cancel, and which is awaiting confirmation. Cancelling
+  // is irreversible, so the button asks once before firing.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const handleCancel = async (order: (typeof orders)[number]) => {
+    const id = String(order.order_id);
+    setCancellingId(id);
+    setCancelError(null);
+    try {
+      await cancelOrder(order);
+      setConfirmingId(null);
+    } catch (err) {
+      const serverError = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      setCancelError(serverError ?? (err instanceof Error ? err.message : "Could not cancel the order."));
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   useEffect(() => {
     void fetchOrders();
@@ -58,6 +79,11 @@ export function OrdersTab() {
           <div className="mb-3 text-[13px] text-[#6b7280]">
             Orders ({orders.length})
           </div>
+          {cancelError && (
+            <div className="mb-3 rounded-[2px] border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-600">
+              {cancelError}
+            </div>
+          )}
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-[#e8edf3] text-[11px] font-semibold uppercase tracking-wider text-[#9aa3af]">
@@ -68,6 +94,7 @@ export function OrdersTab() {
                 <th className="px-3 py-2.5 text-right">Qty.</th>
                 <th className="px-3 py-2.5 text-right">Avg. price</th>
                 <th className="px-3 py-2.5 text-right">Status</th>
+                <th className="px-3 py-2.5 text-right" />
               </tr>
             </thead>
             <tbody>
@@ -100,6 +127,34 @@ export function OrdersTab() {
                         <div className="mt-0.5 max-w-[280px] truncate text-[11px] font-normal text-[#9aa3af]">
                           {order.status_message}
                         </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 text-right">
+                      {isOrderCancellable(order.status) && (
+                        confirmingId === String(order.order_id) ? (
+                          <span className="inline-flex items-center gap-2">
+                            <button
+                              onClick={() => void handleCancel(order)}
+                              disabled={cancellingId === String(order.order_id)}
+                              className="rounded-[2px] bg-[#dc2626] px-2.5 py-1 text-[11px] font-semibold text-white transition disabled:opacity-60"
+                            >
+                              {cancellingId === String(order.order_id) ? "Cancelling…" : "Confirm"}
+                            </button>
+                            <button
+                              onClick={() => setConfirmingId(null)}
+                              className="text-[11px] text-[#6b7280] hover:text-[#222]"
+                            >
+                              Keep
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => { setConfirmingId(String(order.order_id)); setCancelError(null); }}
+                            className="rounded-[2px] border border-[#d0d3d8] px-2.5 py-1 text-[11px] font-medium text-[#444] transition hover:border-[#dc2626] hover:text-[#dc2626]"
+                          >
+                            Cancel
+                          </button>
+                        )
                       )}
                     </td>
                   </tr>

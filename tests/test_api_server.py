@@ -19,13 +19,21 @@ from zerodha_app.api_server import (
     _resample_rows_by_week,
     _is_token_error,
     role_allows_side,
+    role_can_cancel,
 )
 from zerodha_app.config import Settings
 
 
 class FakeKiteAPI:
+    VARIETY_REGULAR = "regular"
+
     def __init__(self) -> None:
         self.quote_calls = []
+        self.cancel_calls: list[tuple[str, str]] = []
+
+    def cancel_order(self, variety, order_id):
+        self.cancel_calls.append((variety, order_id))
+        return {"order_id": order_id}
 
     def profile(self):
         return {"user_id": "AB1234", "user_name": "Aashish"}
@@ -338,6 +346,50 @@ class APIServerTests(unittest.TestCase):
         self.assertEqual(len(result), 4)
         self.assertEqual(result[0]["date"].isoformat(), "2026-05-20T09:15:00")
         self.assertEqual(sum(item["volume"] for item in result), 60)
+
+
+class CancelOrderTests(unittest.TestCase):
+    def _build_api(self) -> ZerodhaFrontendAPI:
+        settings = Settings(
+            api_key="key",
+            api_secret="secret",
+            token_cache_path=Path("tokens.json"),
+            watchlist_path=Path("watchlist.json"),
+        )
+        api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+        api._kite_by_account[None] = (FakeKiteAPI(), "test-token", "key")
+        return api
+
+    def test_cancel_passes_through_the_orders_own_variety(self):
+        # Kite rejects a cancel whose variety differs from the placed order's.
+        api = self._build_api()
+        result = api.cancel_order({"order_id": "2507250001", "variety": "co"})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["order_id"], "2507250001")
+        self.assertEqual(api._kite_by_account[None][0].cancel_calls, [("co", "2507250001")])
+
+    def test_cancel_defaults_to_regular_variety(self):
+        api = self._build_api()
+        api.cancel_order({"order_id": "2507250001"})
+        self.assertEqual(api._kite_by_account[None][0].cancel_calls, [("regular", "2507250001")])
+
+    def test_cancel_requires_an_order_id(self):
+        api = self._build_api()
+        for payload in ({}, {"order_id": ""}, {"order_id": "   "}):
+            with self.assertRaises(ValueError):
+                api.cancel_order(payload)
+        self.assertEqual(api._kite_by_account[None][0].cancel_calls, [])
+
+
+class RoleCanCancelTests(unittest.TestCase):
+    def test_every_trading_role_may_cancel(self):
+        # Cancelling has no side, so a seller may cancel their own BUY stop.
+        for role in ("buyer", "seller", "trader", "super_admin"):
+            self.assertTrue(role_can_cancel(role))
+
+    def test_non_trading_roles_may_not_cancel(self):
+        for role in ("viewer", "", "admin", "SUPER_ADMIN"):
+            self.assertFalse(role_can_cancel(role))
 
 
 class RoleAllowsSideTests(unittest.TestCase):
