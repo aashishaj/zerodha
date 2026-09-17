@@ -12,11 +12,13 @@ function NumField({
   value,
   onChange,
   accent,
+  invalid = false,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   accent: string;
+  invalid?: boolean;
 }) {
   return (
     <div>
@@ -27,10 +29,10 @@ function NumField({
         min="0"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="h-8 w-full rounded-[2px] border border-[#d0d3d8] px-2 text-[13px] text-[#333] focus:outline-none"
-        style={{ outlineColor: accent }}
+        className="h-8 w-full rounded-[2px] border px-2 text-[13px] text-[#333] focus:outline-none"
+        style={{ outlineColor: accent, borderColor: invalid ? "#f87171" : "#d0d3d8" }}
         onFocus={(e) => (e.currentTarget.style.borderColor = accent)}
-        onBlur={(e) => (e.currentTarget.style.borderColor = "#d0d3d8")}
+        onBlur={(e) => (e.currentTarget.style.borderColor = invalid ? "#f87171" : "#d0d3d8")}
       />
     </div>
   );
@@ -56,6 +58,15 @@ export function ProfileSettingsModal({ onClose }: Props) {
   const [selTrig,    setSelTrig]    = useState(String(slSettings.sellTriggerOffset));
   const [selPrice,   setSelPrice]   = useState(String(slSettings.sellPriceOffset));
 
+  // A stop's limit must sit further out than its trigger — above it on a BUY,
+  // below it on a SELL. Both fields hold magnitudes, so on either side that is
+  // the same comparison: the limit offset must be at least the trigger offset.
+  // Kite rejects a stop whose limit falls inside its trigger, so catch it here
+  // rather than at the exchange. Equal is fine; NaN fails, which is intended.
+  const buyOffsetsValid  = Number(buyPrice) >= Number(buyTrig);
+  const sellOffsetsValid = Number(selPrice) >= Number(selTrig);
+  const offsetsValid = buyOffsetsValid && sellOffsetsValid;
+
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -73,6 +84,7 @@ export function ProfileSettingsModal({ onClose }: Props) {
   }, [onClose]);
 
   const handleSave = () => {
+    if (!offsetsValid) return;
     setSLSettings({
       lotSize:           lotStep,
       defaultQty:        snapToStep(Math.round(Number(defaultQty)), lotStep),
@@ -148,8 +160,13 @@ export function ProfileSettingsModal({ onClose }: Props) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <NumField label="Trigger price +" value={buyTrig}  onChange={setBuyTrig}  accent="#387ed1" />
-            <NumField label="Limit price +"   value={buyPrice} onChange={setBuyPrice} accent="#387ed1" />
+            <NumField label="Limit price +"   value={buyPrice} onChange={setBuyPrice} accent="#387ed1" invalid={!buyOffsetsValid} />
           </div>
+          {!buyOffsetsValid && (
+            <div className="mt-1 text-[10px] text-red-600">
+              Limit must be at least the trigger, so it sits above it. Kite rejects a buy stop whose limit is lower.
+            </div>
+          )}
         </div>
 
         {/* SELL section */}
@@ -159,8 +176,13 @@ export function ProfileSettingsModal({ onClose }: Props) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <NumField label="Trigger price -" value={selTrig}  onChange={setSelTrig}  accent="#e5793b" />
-            <NumField label="Limit price -"   value={selPrice} onChange={setSelPrice} accent="#e5793b" />
+            <NumField label="Limit price -"   value={selPrice} onChange={setSelPrice} accent="#e5793b" invalid={!sellOffsetsValid} />
           </div>
+          {!sellOffsetsValid && (
+            <div className="mt-1 text-[10px] text-red-600">
+              Limit must be at least the trigger, so it sits below it. Kite rejects a sell stop whose limit is higher.
+            </div>
+          )}
         </div>
       </div>
 
@@ -174,7 +196,8 @@ export function ProfileSettingsModal({ onClose }: Props) {
         </button>
         <button
           onClick={handleSave}
-          className="rounded-[2px] px-4 py-1.5 text-[12px] font-semibold text-white"
+          disabled={!offsetsValid}
+          className="rounded-[2px] px-4 py-1.5 text-[12px] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
           style={{ backgroundColor: "#387ed1" }}
         >
           Save
