@@ -53,14 +53,22 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   }, [instrument]);
 
   const { canBuy, canSell } = useAllowedSides();
-  // Sides are strictly role-gated: buyers only BUY, sellers only SELL,
-  // traders and super admins both. No exceptions for order type.
-  const allowedSide = (requested: OrderSide): OrderSide => {
+  // Sides are role-gated: buyers only BUY, sellers only SELL, traders and super
+  // admins both. Protective stops are the exception — a stop-loss leg is always
+  // the opposite side of the entry it protects, so a seller must be able to
+  // place a BUY stop and a buyer a SELL stop. role_allows_side() applies the
+  // same exemption server-side. The exemption does NOT hand a single-side role
+  // a buy/sell choice: see the selector below, which is a label for them.
+  const isProtectiveStop = (type: OrderType) => type === "SL" || type === "SL-M";
+  const allowedSide = (requested: OrderSide, type: OrderType): OrderSide => {
+    if (isProtectiveStop(type)) return requested;
     if (requested === "BUY") return canBuy ? "BUY" : "SELL";
     return canSell ? "SELL" : "BUY";
   };
 
-  const [currentSide, setCurrentSide] = useState<OrderSide>(allowedSide(side));
+  const [currentSide, setCurrentSide] = useState<OrderSide>(
+    allowedSide(side, prefill?.orderType ?? "LIMIT"),
+  );
   const [activeTab,   setActiveTab]   = useState<"Quick" | "Regular" | "Iceberg">("Regular");
   const [product,     setProduct]     = useState<ProductType>("MIS");
   const [orderType,   setOrderType]   = useState<OrderType>("LIMIT");
@@ -74,9 +82,6 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   // Price / trigger enabled state
   const priceEnabled   = orderType === "LIMIT" || orderType === "SL";
   const triggerEnabled = orderType === "SL"    || orderType === "SL-M";
-
-  const canUseBuy  = canBuy;
-  const canUseSell = canSell;
 
   const availableCash = useTradingStore((s) => s.availableCash);
 
@@ -110,7 +115,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     const p = prefillRef.current;
     const q = quoteRef.current;
     const nextOrderType = p?.orderType ?? "LIMIT";
-    setCurrentSide(allowedSide(sideRef.current));
+    setCurrentSide(allowedSide(sideRef.current, nextOrderType));
     setActiveTab("Regular");
     setProduct(defaultProduct);
     setOrderType(nextOrderType);
@@ -130,11 +135,15 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     return () => window.removeEventListener("keydown", h);
   }, [open, onClose]);
 
-  // If the current side is ever not permitted for this role, flip to the allowed one.
+  // If the current side is ever not permitted for this role, flip to the allowed
+  // one. Protective stops are exempt — see allowedSide() above, otherwise this
+  // would immediately undo a seller's BUY stop.
   useEffect(() => {
+    if (isProtectiveStop(orderType)) return;
     if (currentSide === "BUY" && !canBuy) setCurrentSide(canSell ? "SELL" : "BUY");
     if (currentSide === "SELL" && !canSell) setCurrentSide(canBuy ? "BUY" : "SELL");
-  }, [currentSide, canBuy, canSell]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSide, canBuy, canSell, orderType]);
 
   const theme = THEME[currentSide];
 
@@ -205,9 +214,13 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
         </button>
       </div>
 
-      {/* ── 2. Buy / Sell selector — outside header, full-width ── */}
-      <div className="flex" style={{ borderBottom: "1px solid #e0e0e0" }}>
-        {canUseBuy && (
+      {/* ── 2. Buy / Sell selector ──
+          Only a role that can trade both sides gets a choice. For a buyer or a
+          seller the side is fixed and shown as a label, never as a control:
+          an employee must never be presented with a BUY button, even though
+          their stop loss is itself a BUY placed on their behalf. */}
+      {canBuy && canSell ? (
+        <div className="flex" style={{ borderBottom: "1px solid #e0e0e0" }}>
           <button
             onClick={() => setCurrentSide("BUY")}
             className="flex-1 py-2.5 text-[13px] font-bold tracking-wide transition-colors"
@@ -219,9 +232,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
           >
             BUY
           </button>
-        )}
-        {canUseBuy && canUseSell && <div style={{ width: 1, backgroundColor: "#e0e0e0" }} />}
-        {canUseSell && (
+          <div style={{ width: 1, backgroundColor: "#e0e0e0" }} />
           <button
             onClick={() => setCurrentSide("SELL")}
             className="flex-1 py-2.5 text-[13px] font-bold tracking-wide transition-colors"
@@ -233,8 +244,18 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
           >
             SELL
           </button>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div
+          className="py-2.5 text-center text-[13px] font-bold tracking-wide text-white"
+          style={{ backgroundColor: theme.headerBg, borderBottom: "1px solid #e0e0e0" }}
+        >
+          {currentSide}
+          {isProtectiveStop(orderType) && (
+            <span className="ml-2 font-normal text-white/70">· stop loss</span>
+          )}
+        </div>
+      )}
 
       {/* ── 3. Tabs ── */}
       <div

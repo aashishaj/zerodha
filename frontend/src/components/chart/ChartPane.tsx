@@ -406,9 +406,10 @@ export const ChartPane = memo(function ChartPane({
             </div>
           </div>
           <div className="flex items-center gap-1">
-            {/* SL-from-order places the OPPOSITE side of the last order, so it
-                only exists for roles that can trade both sides. */}
-            {canBuy && canSell && (
+            {/* The stop loss is the OPPOSITE side of the last order, which is
+                exactly why a single-side role needs it — a seller's stop is a
+                BUY. Gated only on the role being able to trade at all. */}
+            {(canBuy || canSell) && (
             <button
               onClick={handleSLFromOrder}
               disabled={!latestOrderForInstrument}

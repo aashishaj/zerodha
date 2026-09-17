@@ -358,6 +358,25 @@ class RoleAllowsSideTests(unittest.TestCase):
         self.assertFalse(role_allows_side("", "BUY"))
         self.assertFalse(role_allows_side("viewer", "SELL"))
 
+    def test_stop_orders_may_take_the_counter_side(self):
+        # A seller's stop loss is a BUY SL; a buyer's is a SELL SL.
+        for order_type in ("SL", "SL-M", "sl", "SLM", " sl-m "):
+            self.assertTrue(role_allows_side("seller", "BUY", order_type))
+            self.assertTrue(role_allows_side("buyer", "SELL", order_type))
+
+    def test_stop_orders_still_allow_the_roles_own_side(self):
+        self.assertTrue(role_allows_side("seller", "SELL", "SL"))
+        self.assertTrue(role_allows_side("buyer", "BUY", "SL"))
+
+    def test_non_stop_orders_stay_gated(self):
+        for order_type in ("MARKET", "LIMIT", ""):
+            self.assertFalse(role_allows_side("seller", "BUY", order_type))
+            self.assertFalse(role_allows_side("buyer", "SELL", order_type))
+
+    def test_stop_exemption_does_not_reach_unknown_roles(self):
+        self.assertFalse(role_allows_side("viewer", "BUY", "SL"))
+        self.assertFalse(role_allows_side("", "SELL", "SL-M"))
+
 
 class TokenErrorDetectionTests(unittest.TestCase):
     def test_invalid_token_message_is_a_token_error(self):

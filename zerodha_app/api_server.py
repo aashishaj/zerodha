@@ -1285,7 +1285,8 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 if parsed.path == "/api/orders":
                     body = self._read_json()
                     side = str(body.get("side") or "BUY").strip().upper()
-                    if not role_allows_side(user["role"], side):
+                    order_type = str(body.get("order_type") or "MARKET").strip().upper()
+                    if not role_allows_side(user["role"], side, order_type):
                         self._send_json(
                             {"ok": False, "error": f"Your role ({user['role']}) cannot place {side} orders."},
                             status=403,
@@ -1424,16 +1425,29 @@ def _is_token_error(exc: Exception) -> bool:
     )
 
 
-def role_allows_side(role: str, side: str) -> bool:
-    """Strict order-side gating: buyers only BUY, sellers only SELL,
-    traders and super admins both. Unknown roles get nothing."""
+def _is_protective_stop(order_type: str) -> bool:
+    """True for the stop order types (``SL``/``SL-M``) used for stop-loss legs."""
+    return order_type.strip().upper().replace("-", "") in {"SL", "SLM"}
+
+
+def role_allows_side(role: str, side: str, order_type: str = "") -> bool:
+    """Order-side gating: buyers only BUY, sellers only SELL, traders and super
+    admins both. Unknown roles get nothing.
+
+    Protective stops are the exception. A stop-loss leg is always the opposite
+    side of the entry it protects, so a seller has to be able to place a BUY
+    stop and a buyer a SELL stop; refusing those would leave single-side roles
+    unable to protect a position at all. Only ``SL``/``SL-M`` are exempt —
+    MARKET and LIMIT orders stay pinned to the role's own side, so this cannot
+    be used to open a position on the wrong side.
+    """
     if role in ("trader", "super_admin"):
         return True
-    if role == "buyer":
-        return side == "BUY"
-    if role == "seller":
-        return side == "SELL"
-    return False
+    if role not in ("buyer", "seller"):
+        return False
+    if _is_protective_stop(order_type):
+        return True
+    return side == ("BUY" if role == "buyer" else "SELL")
 
 
 def _normalize_instrument_payload(row: dict[str, Any]) -> dict[str, Any] | None:
