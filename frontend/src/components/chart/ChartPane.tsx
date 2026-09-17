@@ -6,6 +6,7 @@ import { IndicatorLegend } from "./IndicatorLegend";
 import { EmptyState } from "../common/EmptyState";
 import { formatExpiry, parseChartDate } from "../../utils/dates";
 import { formatChange, formatInstrumentLabel, formatPercent, formatPrice, movementClass } from "../../utils/format";
+import { roundHalfDown } from "../../utils/price";
 import { Loader } from "../common/Loader";
 import { IconButton } from "../common/IconButton";
 import { useTradingStore } from "../../store/useTradingStore";
@@ -255,10 +256,11 @@ export const ChartPane = memo(function ChartPane({
     const round = (v: number) =>
       Number((Math.round(v / tickSize) * tickSize).toFixed(2));
 
-    // Snap high up / low down to the nearest integer before adding offsets,
-    // so e.g. high=23.51 → base=24, trigger=26, price=26.5
-    const baseHigh = Math.ceil(candle.high);
-    const baseLow  = Math.floor(candle.low);
+    // Round the high and the low to a whole number before adding the offsets.
+    // Same rule on both sides: .1–.5 floors, .6–.9 ceils — so high=283.4 gives
+    // base=283 (trigger 285, limit 285.5), while high=283.6 gives base=284.
+    const baseHigh = roundHalfDown(candle.high);
+    const baseLow  = roundHalfDown(candle.low);
 
     const triggerPrice =
       side === "BUY"
