@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { BarChart3, ChevronLeft, ChevronRight, List } from "lucide-react";
+import { IconButton } from "../common/IconButton";
 import { InstrumentSearch } from "./InstrumentSearch";
 import { WatchlistRow } from "./WatchlistRow";
 import { formatPrice, movementClass } from "../../utils/format";
@@ -83,9 +84,27 @@ export function WatchlistSidebar() {
       </button>
 
       {isWatchlistCollapsed ? (
-        <div className="flex flex-1 flex-col items-center gap-5 pt-4 text-[#9aa3af]">
-          <List className="h-5 w-5" />
-          <BarChart3 className="h-5 w-5" />
+        <div className="flex flex-1 flex-col items-center gap-2 pt-4">
+          {/* Both icons expand the sidebar — the same thing the edge chevron
+              does, and what people reach for when a panel is collapsed. They
+              were bare SVGs with no handler, which read as disabled controls
+              because #9aa3af is the colour this app uses for exactly that. */}
+          <IconButton
+            onClick={toggleWatchlistCollapsed}
+            aria-label="Expand watchlist"
+            title="Expand watchlist"
+            className="h-8 w-8"
+          >
+            <List className="h-5 w-5" />
+          </IconButton>
+          <IconButton
+            onClick={toggleWatchlistCollapsed}
+            aria-label="Expand watchlist"
+            title="Expand watchlist"
+            className="h-8 w-8"
+          >
+            <BarChart3 className="h-5 w-5" />
+          </IconButton>
         </div>
       ) : (
       <>
