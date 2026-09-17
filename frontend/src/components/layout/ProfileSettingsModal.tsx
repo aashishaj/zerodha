@@ -57,6 +57,8 @@ export function ProfileSettingsModal({ onClose }: Props) {
   const [buyPrice,   setBuyPrice]   = useState(String(slSettings.buyPriceOffset));
   const [selTrig,    setSelTrig]    = useState(String(slSettings.sellTriggerOffset));
   const [selPrice,   setSelPrice]   = useState(String(slSettings.sellPriceOffset));
+  const [slTrig,     setSlTrig]     = useState(String(slSettings.stopLossTriggerOffset));
+  const [slPrice,    setSlPrice]    = useState(String(slSettings.stopLossPriceOffset));
 
   // A stop's limit must sit further out than its trigger — above it on a BUY,
   // below it on a SELL. Both fields hold magnitudes, so on either side that is
@@ -65,7 +67,10 @@ export function ProfileSettingsModal({ onClose }: Props) {
   // rather than at the exchange. Equal is fine; NaN fails, which is intended.
   const buyOffsetsValid  = Number(buyPrice) >= Number(buyTrig);
   const sellOffsetsValid = Number(selPrice) >= Number(selTrig);
-  const offsetsValid = buyOffsetsValid && sellOffsetsValid;
+  // Same ordering rule for the stop-loss leg. Which side it lands on depends on
+  // the entry, but either way the limit has to sit beyond the trigger.
+  const stopLossOffsetsValid = Number(slPrice) >= Number(slTrig);
+  const offsetsValid = buyOffsetsValid && sellOffsetsValid && stopLossOffsetsValid;
 
   const ref = useRef<HTMLDivElement>(null);
 
@@ -92,6 +97,8 @@ export function ProfileSettingsModal({ onClose }: Props) {
       buyPriceOffset:    Math.max(0, Number(buyPrice) || 2.5),
       sellTriggerOffset: Math.max(0, Number(selTrig)  || 2),
       sellPriceOffset:   Math.max(0, Number(selPrice) || 2.5),
+      stopLossTriggerOffset: Math.max(0, Number(slTrig)  || 20),
+      stopLossPriceOffset:   Math.max(0, Number(slPrice) || 20.5),
     });
     onClose();
   };
@@ -150,7 +157,7 @@ export function ProfileSettingsModal({ onClose }: Props) {
       {/* SL offset settings */}
       <div className="space-y-3 px-4 py-3">
         <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9aa3af]">
-          SL Order Offsets (points from candle)
+          Entry Order Offsets (points from candle)
         </div>
 
         {/* BUY section */}
@@ -181,6 +188,30 @@ export function ProfileSettingsModal({ onClose }: Props) {
           {!sellOffsetsValid && (
             <div className="mt-1 text-[10px] text-red-600">
               Limit must be at least the trigger, so it sits below it. Kite rejects a sell stop whose limit is higher.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Stop-loss offsets. Measured from the entry order's price rather than
+          from the candle, and applied to the opposite side of that order — so
+          they are a separate setting from the entry offsets above, not a
+          second copy of them. */}
+      <div className="space-y-3 border-t border-[#f0f2f5] px-4 py-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9aa3af]">
+          Stop Loss Offsets (points from order price)
+        </div>
+        <div>
+          <div className="mb-1.5 text-[12px] font-semibold" style={{ color: "#d64545" }}>
+            Opposite side of the entry
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <NumField label="Trigger price ±" value={slTrig}  onChange={setSlTrig}  accent="#d64545" />
+            <NumField label="Limit price ±"   value={slPrice} onChange={setSlPrice} accent="#d64545" invalid={!stopLossOffsetsValid} />
+          </div>
+          {!stopLossOffsetsValid && (
+            <div className="mt-1 text-[10px] text-red-600">
+              Limit must be at least the trigger, so it sits beyond it whichever side the stop lands on.
             </div>
           )}
         </div>

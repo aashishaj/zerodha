@@ -77,10 +77,17 @@ export const ChartPane = memo(function ChartPane({
     void fetchOrders();
   }, [fetchOrders]);
 
-  // Most recent order placed for this pane's instrument. Drives the SL button.
+  // Most recent STOP order placed for this pane's instrument. Drives the Stop
+  // Loss button, which stays inert until there is one: a stop is derived from an
+  // entry's price, and entries are always SL orders, so a MARKET or LIMIT order
+  // placed by hand is not something to hang a stop loss off.
   const latestOrderForInstrument = useMemo(() => {
     if (!instrument) return null;
-    const matching = orders.filter((o) => o.tradingsymbol === instrument.tradingsymbol);
+    const isStopOrder = (type: string | undefined) =>
+      ["SL", "SLM"].includes((type ?? "").toUpperCase().replace("-", ""));
+    const matching = orders.filter(
+      (o) => o.tradingsymbol === instrument.tradingsymbol && isStopOrder(o.order_type),
+    );
     if (!matching.length) return null;
     const placedTime = (o: (typeof matching)[number]) =>
       new Date(o.placed_at ?? o.timestamp ?? 0).getTime() || 0;
@@ -319,27 +326,28 @@ export const ChartPane = memo(function ChartPane({
     setSidePicker(null);
   };
 
-  // Opens a stop-loss order ticket derived from the most recent order placed for
-  // this instrument. The SL is the opposite side of that order and its prices are
-  // computed from the order price using the configurable offsets in slSettings:
-  //   last order SELL → SL BUY:  trigger = price + buyTriggerOffset, limit = price + buyPriceOffset
-  //   last order BUY  → SL SELL: trigger = price - sellTriggerOffset, limit = price - sellPriceOffset
+  // Opens a stop-loss order ticket derived from the most recent stop order placed
+  // for this instrument. The stop is the opposite side of that order, priced from
+  // the order's own price using the STOP-LOSS offsets — deliberately not the entry
+  // offsets, which sit a couple of points off the candle and would leave a stop
+  // that is no stop at all:
+  //   last order SELL → stop BUY:  trigger = price + slTrigger, limit = price + slLimit
+  //   last order BUY  → stop SELL: trigger = price - slTrigger, limit = price - slLimit
   const handleSLFromOrder = () => {
     if (!instrument || !latestOrderForInstrument) return;
     const order = latestOrderForInstrument;
     const base = order.price || order.average_price || quote?.last_price || 0;
     if (!base) return;
 
-    const { buyTriggerOffset, buyPriceOffset, sellTriggerOffset, sellPriceOffset } =
-      slSettingsRef.current;
+    const { stopLossTriggerOffset, stopLossPriceOffset } = slSettingsRef.current;
     const tickSize = instrument.tick_size || 0.05;
     const round = (v: number) => Number((Math.round(v / tickSize) * tickSize).toFixed(2));
 
     const slSide: "BUY" | "SELL" = order.transaction_type === "BUY" ? "SELL" : "BUY";
     const triggerPrice =
-      slSide === "BUY" ? round(base + buyTriggerOffset) : round(base - sellTriggerOffset);
+      slSide === "BUY" ? round(base + stopLossTriggerOffset) : round(base - stopLossTriggerOffset);
     const price =
-      slSide === "BUY" ? round(base + buyPriceOffset) : round(base - sellPriceOffset);
+      slSide === "BUY" ? round(base + stopLossPriceOffset) : round(base - stopLossPriceOffset);
 
     openOrderTicket(instrument, slSide, { orderType: "SL", price, triggerPrice });
   };
@@ -406,12 +414,12 @@ export const ChartPane = memo(function ChartPane({
               disabled={!latestOrderForInstrument}
               title={
                 latestOrderForInstrument
-                  ? `Place SL (${latestOrderForInstrument.transaction_type === "BUY" ? "SELL" : "BUY"}) from last ${latestOrderForInstrument.transaction_type} @ ${formatPrice(latestOrderForInstrument.price || latestOrderForInstrument.average_price)}`
-                  : "No order yet for this instrument"
+                  ? `Place stop loss (${latestOrderForInstrument.transaction_type === "BUY" ? "SELL" : "BUY"}) from last ${latestOrderForInstrument.transaction_type} @ ${formatPrice(latestOrderForInstrument.price || latestOrderForInstrument.average_price)}`
+                  : "No SL order yet for this instrument"
               }
               className="mr-1 flex h-7 items-center rounded-[2px] border border-[#e5793b] px-2.5 text-[12px] font-semibold text-[#e5793b] transition hover:bg-[#fff3ed] disabled:cursor-not-allowed disabled:border-[#e5e7eb] disabled:text-[#c1c7d0] disabled:hover:bg-transparent"
             >
-              SL
+              Stop Loss
             </button>
             )}
             <IconButton title="Zoom in" onClick={() => chartRef.current?.zoomIn()}>

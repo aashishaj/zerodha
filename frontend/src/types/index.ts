@@ -58,6 +58,10 @@ export interface SLSettings {
   sellTriggerOffset: number;
   /** Points subtracted below Low for SELL SL limit price */
   sellPriceOffset: number;
+  /** Points beyond the entry order's price for the stop-loss trigger */
+  stopLossTriggerOffset: number;
+  /** Points beyond the entry order's price for the stop-loss limit */
+  stopLossPriceOffset: number;
 }
 
 export interface Instrument {
