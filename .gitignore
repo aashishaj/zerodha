@@ -15,3 +15,6 @@ frontend/tsconfig.node.tsbuildinfo
 # Local legacy credential files
 full code/user.json
 full code/accesstoken.json
+
+# Claude Code local permission grants (launch.json is shared)
+.claude/settings.local.json
