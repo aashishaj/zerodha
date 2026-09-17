@@ -279,7 +279,7 @@ export const ChartPane = memo(function ChartPane({
         ? round(baseHigh + buyPriceOffset)
         : round(baseLow  - sellPriceOffset);
 
-    openOrderTicket(instr, side, { orderType: "SL", price, triggerPrice });
+    openOrderTicket(instr, side, { intent: "entry", orderType: "SL", price, triggerPrice });
   }, [openOrderTicket]);
 
   // Candle click → show the B/S side picker bubble at the click position, or —
@@ -349,7 +349,7 @@ export const ChartPane = memo(function ChartPane({
     const price =
       slSide === "BUY" ? round(base + stopLossPriceOffset) : round(base - stopLossPriceOffset);
 
-    openOrderTicket(instrument, slSide, { orderType: "SL", price, triggerPrice });
+    openOrderTicket(instrument, slSide, { intent: "stop-loss", orderType: "SL", price, triggerPrice });
   };
 
   const handleDateRangeClick = (label: DateRangeLabel, tf: Timeframe) => {

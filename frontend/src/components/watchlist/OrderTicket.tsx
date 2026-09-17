@@ -69,6 +69,9 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
   const [currentSide, setCurrentSide] = useState<OrderSide>(
     allowedSide(side, prefill?.orderType ?? "LIMIT"),
   );
+  // Whether this ticket was opened AS a stop loss, which the order type cannot
+  // tell us — an entry is an SL order too. Only used for the side label.
+  const [isStopLossTicket, setIsStopLossTicket] = useState(false);
   const [activeTab,   setActiveTab]   = useState<"Quick" | "Regular" | "Iceberg">("Regular");
   const [product,     setProduct]     = useState<ProductType>("MIS");
   const [orderType,   setOrderType]   = useState<OrderType>("LIMIT");
@@ -119,6 +122,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     setActiveTab("Regular");
     setProduct(defaultProduct);
     setOrderType(nextOrderType);
+    setIsStopLossTicket(p?.intent === "stop-loss");
     setQuantity(startQty);
     setPrice(p?.price != null ? String(p.price) : q?.last_price ? String(q.last_price) : "");
     setTriggerPrice(p?.triggerPrice != null ? String(p.triggerPrice) : "");
@@ -251,7 +255,7 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
           style={{ backgroundColor: theme.headerBg, borderBottom: "1px solid #e0e0e0" }}
         >
           {currentSide}
-          {isProtectiveStop(orderType) && (
+          {isStopLossTicket && (
             <span className="ml-2 font-normal text-white/70">· stop loss</span>
           )}
         </div>

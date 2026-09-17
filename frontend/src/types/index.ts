@@ -133,6 +133,9 @@ export type OrderType = "MARKET" | "LIMIT" | "SL" | "SL-M";
 export type OrderValidity = "DAY" | "IOC";
 
 export interface OrderTicketPrefill {
+  /** Why the ticket was opened. Every order this app places is order-type SL,
+      entries included, so the order type cannot distinguish the two. */
+  intent?: "entry" | "stop-loss";
   orderType?: OrderType;
   price?: number;
   triggerPrice?: number;
