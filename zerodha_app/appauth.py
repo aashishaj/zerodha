@@ -11,6 +11,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from zerodha_app.secretbox import harden_db_permissions
+
 LOGGER = logging.getLogger(__name__)
 
 VALID_ROLES: tuple[str, ...] = ("super_admin", "trader", "seller", "buyer")
@@ -65,6 +67,7 @@ class UserStore:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+        harden_db_permissions(self.db_path)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

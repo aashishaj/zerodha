@@ -139,6 +139,9 @@ export interface OrderTicketPrefill {
   orderType?: OrderType;
   price?: number;
   triggerPrice?: number;
+  /** Pre-set the order quantity. Used by the stop-loss ticket so the stop
+      matches the quantity of the order it protects, not the default lot. */
+  quantity?: number;
 }
 
 export interface OrderTicketPayload {

@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from zerodha_app.secretbox import decrypt_secret, encrypt_secret, harden_db_permissions
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -28,6 +30,7 @@ class AccountStore:
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
+        harden_db_permissions(self.db_path)
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -78,7 +81,7 @@ class AccountStore:
             "active": bool(row["active"]),
             "created_at": row["created_at"],
             "api_key": row["api_key"],
-            "api_secret": row["api_secret"],
+            "api_secret": decrypt_secret(row["api_secret"]),
         }
 
     # ── Accounts ─────────────────────────────────────────────────────────────
@@ -104,11 +107,12 @@ class AccountStore:
             if api_key and api_secret:
                 self.set_credentials(existing["id"], api_key, api_secret)
             return existing["id"]
+        stored_secret = encrypt_secret(api_secret) if api_secret else api_secret
         with self._connect() as connection:
             cursor = connection.execute(
                 "INSERT INTO accounts (label, zerodha_user_id, active, created_at, api_key, api_secret) "
                 "VALUES (?, ?, 1, ?, ?, ?)",
-                (label or user_id, user_id, _utcnow_iso(), api_key, api_secret),
+                (label or user_id, user_id, _utcnow_iso(), api_key, stored_secret),
             )
             return int(cursor.lastrowid or 0)
 
@@ -121,7 +125,7 @@ class AccountStore:
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE accounts SET api_key = ?, api_secret = ? WHERE id = ?",
-                (clean_key, clean_secret, account_id),
+                (clean_key, encrypt_secret(clean_secret), account_id),
             )
         return cursor.rowcount > 0
 

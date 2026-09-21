@@ -64,6 +64,31 @@ class AccountStoreTests(unittest.TestCase):
         self.assertEqual(account["api_key"], "key1")
         self.assertEqual(account["api_secret"], "secret1")
 
+    def test_secret_encrypted_at_rest_when_key_set(self):
+        import os
+        import sqlite3
+
+        saved = os.environ.get("ZERODHA_DB_KEY")
+        os.environ["ZERODHA_DB_KEY"] = "test-passphrase"
+        try:
+            a1 = self.store.upsert_account("MKQ150", label="A", api_key="k1", api_secret="s1")
+            # The raw column holds ciphertext, not the plaintext secret.
+            with sqlite3.connect(self.store.db_path) as raw:
+                stored = raw.execute(
+                    "SELECT api_secret FROM accounts WHERE id = ?", (a1,)
+                ).fetchone()[0]
+            self.assertTrue(stored.startswith("enc:"))
+            self.assertNotIn("s1", stored)
+            # But reads through the store decrypt transparently.
+            self.assertEqual(self.store.get_account(a1)["api_secret"], "s1")
+            # api_key stays plaintext so it remains a usable lookup column.
+            self.assertEqual(self.store.get_account_by_api_key("k1")["api_secret"], "s1")
+        finally:
+            if saved is None:
+                os.environ.pop("ZERODHA_DB_KEY", None)
+            else:
+                os.environ["ZERODHA_DB_KEY"] = saved
+
     def test_set_credentials_validates_input(self):
         a1 = self.store.upsert_account("MKQ150", label="A")
         with self.assertRaises(ValueError):

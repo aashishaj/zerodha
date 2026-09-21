@@ -54,6 +54,10 @@ SUPPORTED_HISTORICAL_INTERVALS = {
 
 
 FRONTEND_URL = os.getenv("APP_URL", "http://127.0.0.1:5173").rstrip("/")
+# Mark the session cookie Secure whenever the app is served over HTTPS (the
+# Cloudflare-fronted deployment). Left off for plain-http localhost dev so the
+# cookie is still stored by the browser.
+_COOKIE_SECURE = FRONTEND_URL.lower().startswith("https://")
 
 # Root of the built React app. When present the Python server serves it directly
 # so no separate Vite dev server or nginx is needed in production.
@@ -1394,10 +1398,10 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 self.send_header("Access-Control-Allow-Origin", FRONTEND_URL)
                 if set_cookie is not None:
                     name, value, max_age = set_cookie
-                    self.send_header(
-                        "Set-Cookie",
-                        f"{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}",
-                    )
+                    cookie = f"{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}"
+                    if _COOKIE_SECURE:
+                        cookie += "; Secure"
+                    self.send_header("Set-Cookie", cookie)
                 self.send_header("Content-Length", str(len(encoded)))
                 self.end_headers()
                 self.wfile.write(encoded)

@@ -57,6 +57,10 @@ Required in `.env` or shell before running:
 
 Optional overrides: `ZERODHA_TOKEN_CACHE`, `ZERODHA_WATCHLIST_FILE`, `ZERODHA_WATCHLIST` (inline `token:symbol,...` pairs), `ZERODHA_LOG_LEVEL`.
 
+Deployment / multi-account:
+- `APP_URL` — public origin of the served app (e.g. `https://itmcrest.in`). Sets the CORS `Access-Control-Allow-Origin` and marks the session cookie `Secure` when it is `https`. Defaults to `http://127.0.0.1:5173`.
+- `ZERODHA_DB_KEY` — optional passphrase enabling at-rest encryption of each account's stored Kite `api_secret` in `.zerodha/app.db` (see `secretbox.py`). When unset, secrets are stored in plaintext and existing rows keep working; when set, new/updated secrets are Fernet-encrypted. Losing or changing the key makes previously encrypted secrets unrecoverable (re-enter them via the account picker).
+
 ## Working in this repo
 
 **Always ask before editing or creating files.** Describe what you plan to change and wait for confirmation. Only proceed without asking when the task is completely unambiguous and there is exactly one sensible implementation. Ask when requirements are ambiguous, multiple valid approaches exist, or the action is destructive.
@@ -69,7 +73,9 @@ Optional overrides: `ZERODHA_TOKEN_CACHE`, `ZERODHA_WATCHLIST_FILE`, `ZERODHA_WA
 
 **Never touch `.zerodha/access_tokens.json` directly.** Token reads and writes go through `AuthManager` in `auth.py` only.
 
-**CORS is locked to `http://127.0.0.1:5173`.** Don't widen it or make it configurable without explicit instruction.
+**CORS origin comes from `APP_URL`** (`FRONTEND_URL` in `api_server.py`), defaulting to `http://127.0.0.1:5173` for local dev and set to the public origin (e.g. `https://itmcrest.in`) in the systemd deployment. It is a single allowed origin, not a wildcard — keep it that way. Don't broaden it to `*` or echo arbitrary request origins.
+
+**Account secrets are sensitive.** Kite `api_secret` values live in `.zerodha/app.db`. The DB file is permission-hardened to owner-only on open (`secretbox.harden_db_permissions`) and can be encrypted at rest via `ZERODHA_DB_KEY`. Never send `api_secret` to the client (`accounts_for_user` exposes `api_key` to admins only, never the secret), and never log it.
 
 **Read before modifying.** Always read the relevant file before making changes. Don't assume behaviour from filenames — verify by reading. Match the existing code style and patterns of whatever file you're in.
 
@@ -109,28 +115,78 @@ Optional overrides: `ZERODHA_TOKEN_CACHE`, `ZERODHA_WATCHLIST_FILE`, `ZERODHA_WA
 - **`config.py`** — `Settings` dataclass, `load_settings()` reads env vars, `load_watchlist()` parses `watchlist.json` (`{token: symbol}` or list of `{token, symbol}` objects).
 - **`auth.py`** — `AuthManager` wraps KiteConnect login. Tokens cached by date in `.zerodha/access_tokens.json`. On a missing token it prompts interactively (TTY) or triggers the localhost callback flow automatically.
 - **`streamer.py`** — `LiveTicker` runs the KiteTicker WebSocket. Internally uses `TickStore` (latest tick per symbol), `CandleSeries` (OHLC candle builder), and `LatencyTracker` (exchange-to-local lag). `simulate_candles()` produces offline test data.
-- **`dashboard.py`** — Deprecated single-binary HTTP server + embedded HTML dashboard. Kept for `python run.py dashboard`; seeds `CandleSeries` from Kite historical data then updates via `LiveTicker`.
-- **`api_server.py`** — `ZerodhaFrontendAPI` backed by `ThreadingHTTPServer`. Serves the React frontend. Lazy-loads all instruments from NSE/BSE/NFO/MCX/CDS at first request. Handles interval resampling server-side (sub-minute expansion, N-minute aggregation, weekly rollup). CORS pinned to `http://127.0.0.1:5173`.
+- **`dashboard.py`** — Deprecated single-binary HTTP server + embedded HTML dashboard. Kept for `python run.py dashboard`; seeds `CandleSeries` from Kite historical data then updates via `LiveTicker`. `api_server.py` still imports `_history_window` / `_load_history_with_fallback` from it.
+- **`api_server.py`** — `ZerodhaFrontendAPI` backed by `ThreadingHTTPServer`. Serves the built React app from `frontend/dist/` (no nginx needed), streams live ticks over SSE (`/api/ticks/stream` via `TickBroadcaster`), and gates every non-public route on an app session + role. Lazy-loads all instruments from NSE/BSE/NFO/MCX/CDS at first request. Handles interval resampling server-side (sub-minute expansion, N-minute aggregation, weekly rollup). CORS origin and cookie `Secure` flag derive from `APP_URL` (see the CORS note above).
+- **`appauth.py`** — `UserStore`: SQLite-backed app users (roles `super_admin`/`trader`/`seller`/`buyer`), PBKDF2-SHA256 password hashing (600k iterations), and login sessions (12h TTL, per-session selected account). This is the app's own login, separate from the Zerodha/Kite session.
+- **`accounts.py`** — `AccountStore`: Zerodha accounts (one per broker `zerodha_user_id`), their per-account Kite app credentials, and the `user_accounts` assignment table controlling which buyers/sellers can act on which accounts. Shares `.zerodha/app.db` with `UserStore`.
+- **`secretbox.py`** — At-rest protection for stored `api_secret`: `harden_db_permissions()` (owner-only file perms, called on store init) and `encrypt_secret`/`decrypt_secret` (Fernet, keyed off `ZERODHA_DB_KEY`; no-ops to plaintext when unset).
+- **`callback_server.py`** — Standalone localhost auth-callback bridge (`python run.py auth-server`) that catches the Kite OAuth redirect and exchanges the request token.
 - **`instruments.py`** — `InstrumentCatalog` for derivative look-up (futures/options grouped by underlying).
 - **`cli.py`** — `argparse` CLI; `auto_login_commands = {"api", "dashboard", "stream", "candles"}` sets `login_if_needed=True` automatically.
 
 ### API endpoints (`api_server.py`)
 
+All routes except `/api/health`, `/api/app/login`, and `/api/auth/callback` require a valid app session cookie (`sid`); admin/account-management routes additionally require the `super_admin` role.
+
+App auth & session:
+
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/health` | Liveness check |
+| GET | `/api/health` | Liveness check (public) |
+| POST | `/api/app/login` | Log in an app user; sets the `sid` session cookie |
+| POST | `/api/app/logout` | Clear the session |
+| GET | `/api/app/me` | Current app user + the accounts they can use |
+| POST | `/api/session/select-account` | Set the session's active Zerodha account |
+
+App user admin (`super_admin` only):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/app/users` | List app users |
+| POST | `/api/app/users` | Create an app user |
+| POST | `/api/app/users/{id}/{role\|password\|active\|delete}` | Update a user's role/password/active flag, or delete |
+| GET | `/api/app/users/{id}/accounts` | Accounts assigned to a user |
+
+Zerodha account management (`super_admin` only unless noted):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/accounts` | Accounts visible to the caller (any logged-in user; scoped to their assignments) |
+| GET | `/api/accounts/{id}/users` | Users assigned to an account |
+| GET | `/api/accounts/{id}/login-url` | Kite login URL for a specific account |
+| POST | `/api/accounts/connect-init` | Begin connecting a new Kite app (parks credentials, returns login URL) |
+| POST | `/api/accounts/{id}/credentials` | Store/replace an account's Kite `api_key`/`api_secret` |
+| POST | `/api/accounts/assign` | Assign an account to a user |
+| POST | `/api/accounts/unassign` | Remove an assignment |
+| POST | `/api/accounts/{id}/delete` | Delete an account |
+
+Zerodha (Kite) session & market data (for the session's active account):
+
+| Method | Path | Description |
+|--------|------|-------------|
 | GET | `/api/auth/status` | Whether today's token is cached |
 | GET | `/api/auth/login-url` | Kite login URL |
-| GET | `/api/auth/callback?request_token=` | OAuth redirect handler |
+| GET | `/api/auth/callback?request_token=` | OAuth redirect handler (public) |
 | GET | `/api/profile` | Zerodha user profile |
+| GET | `/api/funds` | Available cash/margin |
 | GET | `/api/instruments` | All instruments (NSE/BSE/NFO/MCX/CDS) |
 | GET | `/api/quote?symbols=A,B` | Live quotes |
 | GET | `/api/historical/{token}?interval=&from=&to=` | Historical candles |
 | GET | `/api/option-chain?underlying=&expiry=` | Option chain for an expiry |
 | GET | `/api/depth?instrumentToken=` | Level 2 market depth |
+| GET | `/api/ticks/stream` | Live tick stream (Server-Sent Events) |
+
+Orders, portfolio & watchlist:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/orders/list` | Today's orders |
+| POST | `/api/orders` | Place a Kite buy/sell order (role-gated by side) |
+| POST | `/api/orders/cancel` | Cancel an open order |
+| GET | `/api/holdings` | Long-term holdings |
+| GET | `/api/positions` | Open positions |
 | GET | `/api/watchlist` | Load watchlist file |
 | POST | `/api/watchlist` | Save watchlist file |
-| POST | `/api/orders` | Place a Kite buy/sell order |
 
 Historical intervals not natively in Kite (`5second`, `10second`, `15second`, `30second`, `2minute`, `4minute`, `week`) are synthesised server-side from minute or day data via `_expand_minute_rows` / `_resample_rows_by_minutes` / `_resample_rows_by_week`.
 

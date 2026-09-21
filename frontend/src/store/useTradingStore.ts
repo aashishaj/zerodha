@@ -10,6 +10,7 @@ import { holdingsService } from "../services/holdingsService";
 import { positionsService } from "../services/positionsService";
 import { parseChartDate } from "../utils/dates";
 import { formatInstrumentLabel } from "../utils/format";
+import { initialMainTab } from "../utils/views";
 import type {
   Candle,
   IndicatorInstance,
@@ -186,7 +187,7 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   loadingSearch: false,
   loadingChart: false,
   loadingInstrumentToken: null,
-  mainTab: "chart",
+  mainTab: initialMainTab(),
   timeframe: "1m",
   compareInstrument: null,
   selectedInstrument: null,

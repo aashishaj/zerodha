@@ -349,7 +349,15 @@ export const ChartPane = memo(function ChartPane({
     const price =
       slSide === "BUY" ? round(base + stopLossPriceOffset) : round(base - stopLossPriceOffset);
 
-    openOrderTicket(instrument, slSide, { intent: "stop-loss", orderType: "SL", price, triggerPrice });
+    // The stop protects the whole order, so it opens at that order's quantity
+    // rather than the default lot size.
+    openOrderTicket(instrument, slSide, {
+      intent: "stop-loss",
+      orderType: "SL",
+      price,
+      triggerPrice,
+      quantity: order.quantity,
+    });
   };
 
   const handleDateRangeClick = (label: DateRangeLabel, tf: Timeframe) => {

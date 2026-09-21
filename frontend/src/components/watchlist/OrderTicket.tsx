@@ -123,7 +123,9 @@ export function OrderTicket({ open, instrument, side, quote, onClose }: OrderTic
     setProduct(defaultProduct);
     setOrderType(nextOrderType);
     setIsStopLossTicket(p?.intent === "stop-loss");
-    setQuantity(startQty);
+    // A stop-loss must cover the same quantity as the order it protects, so
+    // honour a quantity handed in via the prefill; otherwise open at the default.
+    setQuantity(p?.quantity != null ? p.quantity : startQty);
     setPrice(p?.price != null ? String(p.price) : q?.last_price ? String(q.last_price) : "");
     setTriggerPrice(p?.triggerPrice != null ? String(p.triggerPrice) : "");
     setValidity("DAY");

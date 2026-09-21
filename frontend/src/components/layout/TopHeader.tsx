@@ -1,11 +1,22 @@
-import { Bell, LogOut, ShoppingCart, UserCircle2 } from "lucide-react";
+import { Bell, ExternalLink, LogOut, ShoppingCart, UserCircle2 } from "lucide-react";
 import { useState } from "react";
 import { formatChange, formatPercent, formatPrice, movementClass } from "../../utils/format";
 import { useTradingStore } from "../../store/useTradingStore";
 import { useAuthStore } from "../../store/useAuthStore";
 import { ProfileSettingsModal } from "./ProfileSettingsModal";
+import { openViewInNewTab } from "../../utils/views";
+import type { MainTab } from "../../types";
 
-const navItems = ["Dashboard", "Orders", "Holdings", "Positions", "Bids", "Funds"];
+// Nav items and, where they map to a standalone view, the MainTab that view
+// opens as (used both for in-place switching and "open in new tab").
+const navItems: Array<{ label: string; view: MainTab | null }> = [
+  { label: "Dashboard", view: "chart" },
+  { label: "Orders", view: "orders" },
+  { label: "Holdings", view: "holdings" },
+  { label: "Positions", view: "positions" },
+  { label: "Bids", view: null },
+  { label: "Funds", view: null },
+];
 
 export function TopHeader() {
   const profile = useTradingStore((state) => state.profile);
@@ -38,26 +49,31 @@ export function TopHeader() {
 
         <nav className="flex items-center gap-7">
           {navItems.map((item) => {
-            const isActive =
-              (item === "Dashboard" && mainTab === "chart") ||
-              (item === "Orders" && mainTab === "orders") ||
-              (item === "Holdings" && mainTab === "holdings") ||
-              (item === "Positions" && mainTab === "positions");
+            const isActive = item.view != null && mainTab === item.view;
+            // Orders/Holdings/Positions can be popped into their own browser
+            // tab; Dashboard (the chart) and the placeholders cannot.
+            const canPopOut = item.view != null && item.view !== "chart";
             return (
-              <button
-                key={item}
-                onClick={() => {
-                  if (item === "Dashboard") setMainTab("chart");
-                  else if (item === "Orders") setMainTab("orders");
-                  else if (item === "Holdings") setMainTab("holdings");
-                  else if (item === "Positions") setMainTab("positions");
-                }}
-                className={`border-0 bg-transparent p-0 text-[13px] ${
-                  isActive ? "font-medium text-[#222]" : "text-[#6b7280]"
-                }`}
-              >
-                {item}
-              </button>
+              <span key={item.label} className="group flex items-center gap-1">
+                <button
+                  onClick={() => { if (item.view) setMainTab(item.view); }}
+                  className={`border-0 bg-transparent p-0 text-[13px] ${
+                    isActive ? "font-medium text-[#222]" : "text-[#6b7280]"
+                  }`}
+                >
+                  {item.label}
+                </button>
+                {canPopOut && (
+                  <button
+                    onClick={() => item.view && openViewInNewTab(item.view)}
+                    title={`Open ${item.label} in a new tab`}
+                    aria-label={`Open ${item.label} in a new tab`}
+                    className="flex h-4 w-4 items-center justify-center rounded-sm text-[#c2c8d0] opacity-0 transition group-hover:opacity-100 hover:text-[#4b5563]"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                  </button>
+                )}
+              </span>
             );
           })}
         </nav>
