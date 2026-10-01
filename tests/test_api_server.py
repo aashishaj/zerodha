@@ -17,7 +17,9 @@ from zerodha_app.api_server import (
     _quote_key_for_instrument,
     _resample_rows_by_minutes,
     _resample_rows_by_week,
+    _is_rate_limited,
     _is_token_error,
+    _RateGate,
     gtt_oco_legs,
     role_allows_gtt_exit,
     role_allows_side,
@@ -534,6 +536,103 @@ class HistoricalFallbackTests(unittest.TestCase):
         calls = api._kite_by_account[None][0].history_calls
         self.assertEqual(len(calls), 2)
         self.assertLess(calls[1][0], calls[0][0])
+
+
+class KiteRateLimitTests(unittest.TestCase):
+    def _build_api(self) -> ZerodhaFrontendAPI:
+        settings = Settings(
+            api_key="key",
+            api_secret="secret",
+            token_cache_path=Path("tokens.json"),
+            watchlist_path=Path("watchlist.json"),
+        )
+        api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+        api._kite_by_account[None] = (FakeKiteAPI(), "test-token", "key")
+        self.sleeps: list[float] = []
+        api._sleep = self.sleeps.append
+        return api
+
+    @staticmethod
+    def _flaky(failures: int, exc: Exception):
+        calls = {"n": 0}
+
+        def fn():
+            calls["n"] += 1
+            if calls["n"] <= failures:
+                raise exc
+            return "ok"
+
+        return fn, calls
+
+    def test_retries_a_rate_limited_call_then_succeeds(self):
+        api = self._build_api()
+        fn, calls = self._flaky(2, RuntimeError("Too many requests"))
+        self.assertEqual(api._kite_call(object(), "quote", fn), "ok")
+        self.assertEqual(calls["n"], 3)
+        self.assertIn(0.5, self.sleeps)
+        self.assertIn(1.0, self.sleeps)
+
+    def test_gives_up_after_the_last_retry(self):
+        api = self._build_api()
+        fn, calls = self._flaky(99, RuntimeError("Too many requests"))
+        with self.assertRaises(RuntimeError):
+            api._kite_call(object(), "quote", fn)
+        self.assertEqual(calls["n"], 4)
+
+    def test_other_errors_are_not_retried(self):
+        api = self._build_api()
+        fn, calls = self._flaky(1, ValueError("invalid token"))
+        with self.assertRaises(ValueError):
+            api._kite_call(object(), "historical", fn)
+        self.assertEqual(calls["n"], 1)
+
+    def test_incremental_history_survives_a_rate_limit(self):
+        api = self._build_api()
+        kite = api._kite_by_account[None][0]
+        real = kite.historical_data
+        state = {"failed": False}
+
+        def flaky_history(*args):
+            if not state["failed"]:
+                state["failed"] = True
+                raise RuntimeError("Too many requests")
+            return real(*args)
+
+        kite.historical_data = flaky_history
+        rows = api.historical(101, "minute", "2026-10-01T10:34:00+05:30")
+        self.assertEqual(len(rows), 1)
+
+    def test_detects_kite_rate_limit_errors(self):
+        class Kite429(Exception):
+            code = 429
+
+        self.assertTrue(_is_rate_limited(Kite429("x")))
+        self.assertTrue(_is_rate_limited(RuntimeError("Too many requests")))
+        self.assertFalse(_is_rate_limited(RuntimeError("invalid token")))
+
+
+class RateGateTests(unittest.TestCase):
+    def test_spaces_back_to_back_calls(self):
+        now = {"t": 100.0}
+        sleeps: list[float] = []
+
+        def sleep(d: float) -> None:
+            sleeps.append(d)
+            now["t"] += d
+
+        gate = _RateGate(0.35, clock=lambda: now["t"], sleep=sleep)
+        for _ in range(3):
+            gate.wait()
+        self.assertEqual([round(d, 2) for d in sleeps], [0.35, 0.35])
+
+    def test_no_wait_once_the_interval_has_passed(self):
+        now = {"t": 0.0}
+        sleeps: list[float] = []
+        gate = _RateGate(1.0, clock=lambda: now["t"], sleep=sleeps.append)
+        gate.wait()
+        now["t"] = 5.0
+        gate.wait()
+        self.assertEqual(sleeps, [])
 
 
 class SplitByFreezeLimitTests(unittest.TestCase):

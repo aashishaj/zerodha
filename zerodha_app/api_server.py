@@ -6,6 +6,7 @@ import mimetypes
 import os
 import queue
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -51,6 +52,17 @@ SUPPORTED_HISTORICAL_INTERVALS = {
     "day",
     "week",
 }
+
+# Minimum spacing between Kite calls of one kind on one API key, from Kite's
+# published limits (historical 3 req/s, quote 1 req/s). Exceeding them gets a
+# "Too many requests" error, which at startup used to take the dashboard down.
+_KITE_RATE_INTERVALS: dict[str, float] = {
+    "historical": 0.35,
+    "quote": 1.0,
+}
+# Back-off before each retry when Kite still answers "Too many requests" —
+# e.g. another server sharing the same API key used up the budget.
+_KITE_RETRY_DELAYS: tuple[float, ...] = (0.5, 1.0, 2.0)
 
 # Exchange freeze quantity per underlying: the most one order may carry. A GTT
 # above it is split into several GTTs. Underlyings not listed are not split.
@@ -196,6 +208,11 @@ class ZerodhaFrontendAPI:
         # Credentials for in-flight "add account" OAuth connects, keyed by a
         # one-time nonce carried through Kite's redirect_params round trip.
         self._pending_connects: dict[str, dict[str, str]] = {}
+        # Per (api_key, call kind) spacing for rate-limited Kite endpoints.
+        self._rate_gates: dict[tuple[str, str], _RateGate] = {}
+        self._rate_gates_lock = threading.Lock()
+        self._clock = time.monotonic
+        self._sleep = time.sleep
 
     def account_store(self) -> AccountStore:
         if self._account_store is None:
@@ -467,7 +484,7 @@ class ZerodhaFrontendAPI:
 
         # Zerodha integration point:
         # The backend resolves instrument exchange prefixes for Kite quote requests.
-        raw_quotes = kite.quote(quote_keys)
+        raw_quotes = self._kite_call(kite, "quote", kite.quote, quote_keys)
         output: dict[str, dict[str, Any]] = {}
 
         for frontend_key, quote_key in zip(frontend_keys, quote_keys):
@@ -508,10 +525,12 @@ class ZerodhaFrontendAPI:
             # closed-market fallback would read that as "no data" and send a
             # whole month back instead, reshaping the chart and snapping the
             # user's zoom, so it is only applied to the initial load.
-            rows = kite.historical_data(instrument_token, from_time, to_time, source_interval)
+            rows = self._kite_call(
+                kite, "historical", kite.historical_data, instrument_token, from_time, to_time, source_interval
+            )
         else:
             rows = _load_history_with_fallback(
-                kite=kite,
+                kite=_ThrottledHistory(self, kite),
                 token=instrument_token,
                 from_time=from_time,
                 to_time=to_time,
@@ -580,7 +599,7 @@ class ZerodhaFrontendAPI:
 
         kite = self._get_kite()
         quote_key = _quote_key_for_instrument(instrument)
-        quote = kite.quote([quote_key]).get(quote_key) or {}
+        quote = self._kite_call(kite, "quote", kite.quote, [quote_key]).get(quote_key) or {}
         depth = quote.get("depth") or {}
         return {
             "instrument_token": instrument_token,
@@ -681,7 +700,7 @@ class ZerodhaFrontendAPI:
 
         kite = self._get_kite()
         quote_key = _quote_key_for_instrument(instrument)
-        quote = kite.quote([quote_key]).get(quote_key) or {}
+        quote = self._kite_call(kite, "quote", kite.quote, [quote_key]).get(quote_key) or {}
         last_price = _as_float(quote.get("last_price")) or 0.0
         if last_price <= 0:
             raise ValueError(f"No last price available for {instrument['tradingsymbol']}.")
@@ -867,6 +886,35 @@ class ZerodhaFrontendAPI:
                 )
                 self._broadcaster_by_account[account_user_id] = broadcaster
             return broadcaster
+
+    def _kite_call(self, kite: Any, kind: str, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        """Call a rate-limited Kite endpoint, spaced and retried.
+
+        Calls of one ``kind`` on one API key are spaced to Kite's limit, so a
+        burst (both charts loading at startup, every poll landing at once)
+        queues briefly instead of being refused. If Kite still answers "Too
+        many requests" the call backs off and retries a few times before the
+        error is allowed through.
+        """
+        gate = self._rate_gate(str(getattr(kite, "api_key", "") or ""), kind)
+        for delay in (*_KITE_RETRY_DELAYS, None):
+            gate.wait()
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                if delay is None or not _is_rate_limited(exc):
+                    raise
+                LOGGER.warning("Kite %s call rate-limited; retrying in %.1fs", kind, delay)
+                self._sleep(delay)
+        raise RuntimeError("unreachable")  # the loop always returns or raises
+
+    def _rate_gate(self, api_key: str, kind: str) -> "_RateGate":
+        with self._rate_gates_lock:
+            gate = self._rate_gates.get((api_key, kind))
+            if gate is None:
+                gate = _RateGate(_KITE_RATE_INTERVALS.get(kind, 0.0), clock=self._clock, sleep=self._sleep)
+                self._rate_gates[(api_key, kind)] = gate
+            return gate
 
     def _get_kite(self) -> Any:
         if KiteConnect is None:
@@ -1625,6 +1673,55 @@ def role_allows_side(role: str, side: str, order_type: str = "") -> bool:
     if _is_protective_stop(order_type):
         return True
     return side == ("BUY" if role == "buyer" else "SELL")
+
+
+class _RateGate:
+    """Spaces calls at least ``interval`` seconds apart, across threads.
+
+    Each caller reserves the next free slot under the lock and then sleeps
+    outside it until that slot, so concurrent requests queue in order rather
+    than all firing at once.
+    """
+
+    def __init__(self, interval: float, *, clock: Any = time.monotonic, sleep: Any = time.sleep) -> None:
+        self._interval = interval
+        self._clock = clock
+        self._sleep = sleep
+        self._next = 0.0
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        """Block until this caller's slot comes up."""
+        if self._interval <= 0:
+            return
+        with self._lock:
+            now = self._clock()
+            start = max(now, self._next)
+            self._next = start + self._interval
+        delay = start - now
+        if delay > 0:
+            self._sleep(delay)
+
+
+class _ThrottledHistory:
+    """Kite stand-in whose ``historical_data`` goes through the rate gate.
+
+    ``_load_history_with_fallback`` (in the deprecated dashboard module) calls
+    ``kite.historical_data`` directly, possibly twice; this routes those calls
+    through :meth:`ZerodhaFrontendAPI._kite_call` without changing it.
+    """
+
+    def __init__(self, api: "ZerodhaFrontendAPI", kite: Any) -> None:
+        self._api = api
+        self._kite = kite
+
+    def historical_data(self, *args: Any, **kwargs: Any) -> Any:
+        return self._api._kite_call(self._kite, "historical", self._kite.historical_data, *args, **kwargs)
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """Whether a Kite error is its "Too many requests" (HTTP 429) refusal."""
+    return getattr(exc, "code", None) == 429 or "too many requests" in str(exc).lower()
 
 
 def role_allows_gtt_exit(role: str, exit_side: str) -> bool:

@@ -22,6 +22,8 @@ const intervalMap: Record<Timeframe, string> = {
   "1w": "week",
 };
 
+const inflight = new Map<string, Promise<Candle[]>>();
+
 export const chartService = {
   async getCandles(instrumentToken: number, timeframe: Timeframe, from?: string): Promise<Candle[]> {
     if (useMock) {
@@ -30,12 +32,22 @@ export const chartService = {
     // Zerodha integration point:
     // Backend should resolve and call Kite historical candles API.
     // Historical fetch must work even when the market is closed, returning latest available bars.
-    const response = await apiClient.get<Candle[]>(`/historical/${instrumentToken}`, {
-      params: {
-        interval: intervalMap[timeframe],
-        ...(from ? { from } : {}),
-      },
-    });
-    return response.data;
+    // Share one request between callers asking for the same candles at the
+    // same moment — at startup the chart's first load and the 10s refresh fire
+    // together, and every duplicate counts against Kite's history rate limit.
+    const key = `${instrumentToken}|${timeframe}|${from ?? ""}`;
+    const pending = inflight.get(key);
+    if (pending) return pending;
+    const request = apiClient
+      .get<Candle[]>(`/historical/${instrumentToken}`, {
+        params: {
+          interval: intervalMap[timeframe],
+          ...(from ? { from } : {}),
+        },
+      })
+      .then((response) => response.data)
+      .finally(() => inflight.delete(key));
+    inflight.set(key, request);
+    return request;
   },
 };

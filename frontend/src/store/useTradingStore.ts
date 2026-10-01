@@ -345,13 +345,23 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       isReady: true,
     });
 
+    // The dashboard is usable from here on. A chart or option chain that fails
+    // to load (e.g. Kite rate-limiting the startup burst) must not take the
+    // whole app down with it: log it and let the periodic refreshes fill it in.
+    const settle = async (label: string, task: () => Promise<void>) => {
+      try {
+        await task();
+      } catch (err) {
+        console.error(`Startup ${label} load failed; will retry on refresh:`, err);
+      }
+    };
     if (seeded[1]) {
-      await get().selectInstrument(seeded[1]);
+      await settle("chart", () => get().selectInstrument(seeded[1]));
     }
     if (seeded[2]) {
-      await get().setCompareInstrument(seeded[2]);
+      await settle("compare chart", () => get().setCompareInstrument(seeded[2]));
     }
-    await get().refreshOptionChain();
+    await settle("option chain", () => get().refreshOptionChain());
   },
   async refreshQuotes(symbols) {
     const requested = symbols?.length
@@ -464,11 +474,14 @@ export const useTradingStore = create<TradingState>((set, get) => ({
     }
     const key = `${instrument.instrument_token}:${get().timeframe}`;
     set({ compareInstrument: instrument, loadingInstrumentToken: instrument.instrument_token });
-    if (!get().candles[key]) {
-      const candles = await chartService.getCandles(instrument.instrument_token, get().timeframe);
-      set((state) => ({ candles: { ...state.candles, [key]: mergeCandles(state.candles[key], candles) } }));
+    try {
+      if (!get().candles[key]) {
+        const candles = await chartService.getCandles(instrument.instrument_token, get().timeframe);
+        set((state) => ({ candles: { ...state.candles, [key]: mergeCandles(state.candles[key], candles) } }));
+      }
+    } finally {
+      set({ loadingInstrumentToken: null });
     }
-    set({ loadingInstrumentToken: null });
   },
   async refreshInstrument(instrument) {
     const key = `${instrument.instrument_token}:${get().timeframe}`;
