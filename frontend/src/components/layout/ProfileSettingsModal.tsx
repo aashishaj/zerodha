@@ -70,7 +70,24 @@ export function ProfileSettingsModal({ onClose }: Props) {
   // Same ordering rule for the stop-loss leg. Which side it lands on depends on
   // the entry, but either way the limit has to sit beyond the trigger.
   const stopLossOffsetsValid = Number(slPrice) >= Number(slTrig);
-  const offsetsValid = buyOffsetsValid && sellOffsetsValid && stopLossOffsetsValid;
+  // OCO GTT offsets, as magnitudes from the entry price. For both entries the
+  // stop's limit sits beyond its trigger (at least the trigger offset) and the
+  // target's limit sits back toward the entry (at most the trigger offset), so
+  // a target that is merely touched still fills.
+  const [gBuyStopT,  setGBuyStopT]  = useState(String(slSettings.gttBuyStopTrigger));
+  const [gBuyStopP,  setGBuyStopP]  = useState(String(slSettings.gttBuyStopPrice));
+  const [gBuyTgtT,   setGBuyTgtT]   = useState(String(slSettings.gttBuyTargetTrigger));
+  const [gBuyTgtP,   setGBuyTgtP]   = useState(String(slSettings.gttBuyTargetPrice));
+  const [gSellStopT, setGSellStopT] = useState(String(slSettings.gttSellStopTrigger));
+  const [gSellStopP, setGSellStopP] = useState(String(slSettings.gttSellStopPrice));
+  const [gSellTgtT,  setGSellTgtT]  = useState(String(slSettings.gttSellTargetTrigger));
+  const [gSellTgtP,  setGSellTgtP]  = useState(String(slSettings.gttSellTargetPrice));
+  const gttBuyStopValid  = Number(gBuyStopP)  >= Number(gBuyStopT);
+  const gttBuyTgtValid   = Number(gBuyTgtP)   <= Number(gBuyTgtT);
+  const gttSellStopValid = Number(gSellStopP) >= Number(gSellStopT);
+  const gttSellTgtValid  = Number(gSellTgtP)  <= Number(gSellTgtT);
+  const gttValid = gttBuyStopValid && gttBuyTgtValid && gttSellStopValid && gttSellTgtValid;
+  const offsetsValid = buyOffsetsValid && sellOffsetsValid && stopLossOffsetsValid && gttValid;
 
   const ref = useRef<HTMLDivElement>(null);
 
@@ -99,6 +116,14 @@ export function ProfileSettingsModal({ onClose }: Props) {
       sellPriceOffset:   Math.max(0, Number(selPrice) || 2.5),
       stopLossTriggerOffset: Math.max(0, Number(slTrig)  || 20),
       stopLossPriceOffset:   Math.max(0, Number(slPrice) || 20.5),
+      gttBuyStopTrigger:    Math.max(0, Number(gBuyStopT)  || 10),
+      gttBuyStopPrice:      Math.max(0, Number(gBuyStopP)  || 10.5),
+      gttBuyTargetTrigger:  Math.max(0, Number(gBuyTgtT)   || 10),
+      gttBuyTargetPrice:    Math.max(0, Number(gBuyTgtP)   || 9.5),
+      gttSellStopTrigger:   Math.max(0, Number(gSellStopT) || 20),
+      gttSellStopPrice:     Math.max(0, Number(gSellStopP) || 20.5),
+      gttSellTargetTrigger: Math.max(0, Number(gSellTgtT)  || 30),
+      gttSellTargetPrice:   Math.max(0, Number(gSellTgtP)  || 29.5),
     });
     onClose();
   };
@@ -106,7 +131,7 @@ export function ProfileSettingsModal({ onClose }: Props) {
   return (
     <div
       ref={ref}
-      className="fixed z-50 right-4 top-12 w-72 overflow-hidden rounded-[3px] border border-[#e5e7eb] bg-white shadow-xl"
+      className="fixed z-50 right-4 top-12 max-h-[calc(100vh-4rem)] w-72 overflow-y-auto rounded-[3px] border border-[#e5e7eb] bg-white shadow-xl"
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-[#e8edf3] px-4 py-3">
@@ -215,6 +240,41 @@ export function ProfileSettingsModal({ onClose }: Props) {
             </div>
           )}
         </div>
+      </div>
+
+      {/* OCO GTT offsets, from the entry order's price. The exit is the
+          opposite side of the entry; the two legs are a stop and a target. */}
+      <div className="space-y-3 border-t border-[#f0f2f5] px-4 py-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-[#9aa3af]">
+          GTT (OCO) Offsets (points from entry price)
+        </div>
+        <div>
+          <div className="mb-1.5 text-[12px] font-semibold" style={{ color: "#387ed1" }}>
+            After a Buy — exit Sell
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <NumField label="Stop trigger −"   value={gBuyStopT} onChange={setGBuyStopT} accent="#387ed1" />
+            <NumField label="Stop limit −"     value={gBuyStopP} onChange={setGBuyStopP} accent="#387ed1" invalid={!gttBuyStopValid} />
+            <NumField label="Target trigger +" value={gBuyTgtT}  onChange={setGBuyTgtT}  accent="#387ed1" />
+            <NumField label="Target limit +"   value={gBuyTgtP}  onChange={setGBuyTgtP}  accent="#387ed1" invalid={!gttBuyTgtValid} />
+          </div>
+        </div>
+        <div>
+          <div className="mb-1.5 text-[12px] font-semibold" style={{ color: "#e5793b" }}>
+            After a Sell — exit Buy
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <NumField label="Stop trigger +"   value={gSellStopT} onChange={setGSellStopT} accent="#e5793b" />
+            <NumField label="Stop limit +"     value={gSellStopP} onChange={setGSellStopP} accent="#e5793b" invalid={!gttSellStopValid} />
+            <NumField label="Target trigger −" value={gSellTgtT}  onChange={setGSellTgtT}  accent="#e5793b" />
+            <NumField label="Target limit −"   value={gSellTgtP}  onChange={setGSellTgtP}  accent="#e5793b" invalid={!gttSellTgtValid} />
+          </div>
+        </div>
+        {!gttValid && (
+          <div className="text-[10px] text-red-600">
+            A stop's limit must be at least its trigger offset; a target's limit at most its trigger offset, so it fills once touched.
+          </div>
+        )}
       </div>
 
       {/* Footer */}

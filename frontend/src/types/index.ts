@@ -62,6 +62,22 @@ export interface SLSettings {
   stopLossTriggerOffset: number;
   /** Points beyond the entry order's price for the stop-loss limit */
   stopLossPriceOffset: number;
+  /** OCO GTT after a BUY entry (option buying): points below entry for the stop trigger */
+  gttBuyStopTrigger: number;
+  /** …and the stop limit, at or below the trigger */
+  gttBuyStopPrice: number;
+  /** Points above entry for the target trigger */
+  gttBuyTargetTrigger: number;
+  /** …and the target limit, at or below the trigger so a touch fills */
+  gttBuyTargetPrice: number;
+  /** OCO GTT after a SELL entry (option selling): points above entry for the stop trigger */
+  gttSellStopTrigger: number;
+  /** …and the stop limit, at or above the trigger */
+  gttSellStopPrice: number;
+  /** Points below entry for the target trigger */
+  gttSellTargetTrigger: number;
+  /** …and the target limit, at or above the trigger so a touch fills */
+  gttSellTargetPrice: number;
 }
 
 export interface Instrument {
@@ -271,4 +287,56 @@ export interface AccountSummary {
 export interface ActiveAccount {
   id: number;
   label: string;
+}
+
+/** One trigger/limit pair of an OCO GTT leg. */
+export interface GttLegPrices {
+  trigger: number;
+  price: number;
+}
+
+/** Request to place (or dry-run) an OCO GTT exit. */
+export interface GttPlacePayload {
+  instrument_token: number;
+  exit_side: "BUY" | "SELL";
+  quantity: number;
+  product: string;
+  stop: GttLegPrices;
+  target: GttLegPrices;
+  dry_run?: boolean;
+}
+
+/** The server's plan for an OCO GTT: quantities split at the freeze limit. */
+export interface GttPlan {
+  ok: boolean;
+  tradingsymbol: string;
+  exchange: string;
+  exit_side: "BUY" | "SELL";
+  last_price: number;
+  trigger_values: number[];
+  freeze_limit: number | null;
+  quantities: number[];
+  trigger_ids?: Array<number | string>;
+  message?: string;
+}
+
+/** A GTT as Kite lists it. */
+export interface Gtt {
+  id: number;
+  type: string;
+  status: string;
+  created_at?: string;
+  condition: {
+    exchange: string;
+    tradingsymbol: string;
+    trigger_values: number[];
+    last_price?: number;
+  };
+  orders: Array<{
+    transaction_type: "BUY" | "SELL";
+    quantity: number;
+    price: number;
+    order_type: string;
+    product: string;
+  }>;
 }

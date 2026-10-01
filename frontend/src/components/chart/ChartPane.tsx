@@ -2,6 +2,7 @@ import { Ghost, Minus, Plus, RefreshCw, RotateCcw, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Candle, Instrument, Quote, Timeframe } from "../../types";
 import { CandleChart, type CandleChartHandle } from "./CandleChart";
+import { GttConfirmPopup } from "./GttConfirmPopup";
 import { IndicatorLegend } from "./IndicatorLegend";
 import { EmptyState } from "../common/EmptyState";
 import { formatExpiry, parseChartDate } from "../../utils/dates";
@@ -93,6 +94,24 @@ export const ChartPane = memo(function ChartPane({
       new Date(o.placed_at ?? o.timestamp ?? 0).getTime() || 0;
     return matching.reduce((latest, o) => (placedTime(o) >= placedTime(latest) ? o : latest));
   }, [orders, instrument]);
+
+  // Most recent EXECUTED stop order for this instrument — the entry an OCO GTT
+  // exits. A GTT goes on only after the entry has filled, so pending entries
+  // don't count; its price (not the fill) is the base for both legs.
+  const latestFilledEntry = useMemo(() => {
+    if (!instrument) return null;
+    const matching = orders.filter(
+      (o) =>
+        o.tradingsymbol === instrument.tradingsymbol &&
+        ["SL", "SLM"].includes((o.order_type ?? "").toUpperCase().replace("-", "")) &&
+        (o.status ?? "").toUpperCase() === "COMPLETE",
+    );
+    if (!matching.length) return null;
+    const placedTime = (o: (typeof matching)[number]) =>
+      new Date(o.placed_at ?? o.timestamp ?? 0).getTime() || 0;
+    return matching.reduce((latest, o) => (placedTime(o) >= placedTime(latest) ? o : latest));
+  }, [orders, instrument]);
+  const [isGttOpen, setIsGttOpen] = useState(false);
 
   // Latest indicator values reported by the chart, keyed by instance id
   const [indicatorValues, setIndicatorValues] = useState<Record<string, number | null>>({});
@@ -430,6 +449,29 @@ export const ChartPane = memo(function ChartPane({
             >
               Stop Loss
             </button>
+            )}
+            {/* OCO GTT exit: stop loss + target on the opposite side of the
+                filled entry, whichever triggers first. */}
+            {(canBuy || canSell) && (
+            <button
+              onClick={() => setIsGttOpen(true)}
+              disabled={!latestFilledEntry}
+              title={
+                latestFilledEntry
+                  ? `Place OCO GTT (${latestFilledEntry.transaction_type === "BUY" ? "SELL" : "BUY"}) exiting the ${latestFilledEntry.transaction_type} @ ${formatPrice(latestFilledEntry.price || latestFilledEntry.average_price)}`
+                  : "No executed SL entry yet for this instrument"
+              }
+              className="mr-1 flex h-7 items-center rounded-[2px] border border-[#387ed1] px-2.5 text-[12px] font-semibold text-[#387ed1] transition hover:bg-[#eef4fc] disabled:cursor-not-allowed disabled:border-[#e5e7eb] disabled:text-[#c1c7d0] disabled:hover:bg-transparent"
+            >
+              GTT
+            </button>
+            )}
+            {isGttOpen && latestFilledEntry && (
+              <GttConfirmPopup
+                instrument={instrument}
+                entry={latestFilledEntry}
+                onClose={() => setIsGttOpen(false)}
+              />
             )}
             <IconButton title="Zoom in" onClick={() => chartRef.current?.zoomIn()}>
               <Plus className="h-4 w-4" />

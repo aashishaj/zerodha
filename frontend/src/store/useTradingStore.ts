@@ -6,6 +6,7 @@ import { marketDepthService } from "../services/marketDepthService";
 import { watchlistService } from "../services/watchlistService";
 import { optionChainService } from "../services/optionChainService";
 import { orderService } from "../services/orderService";
+import { gttService } from "../services/gttService";
 import { holdingsService } from "../services/holdingsService";
 import { positionsService } from "../services/positionsService";
 import { parseChartDate } from "../utils/dates";
@@ -21,6 +22,9 @@ import type {
   MainTab,
   MarketDepth,
   OptionChainRow,
+  Gtt,
+  GttPlacePayload,
+  GttPlan,
   Holding,
   Order,
   OrderSide,
@@ -140,6 +144,12 @@ interface TradingState {
   fetchOrders: () => Promise<void>;
   cancelOrder: (order: Order) => Promise<void>;
   ordersError: boolean;
+  gtts: Gtt[];
+  gttsError: boolean;
+  fetchGtts: () => Promise<void>;
+  /** Places the OCO GTT(s); with `dry_run` returns the split plan only. */
+  placeGtt: (payload: GttPlacePayload) => Promise<GttPlan>;
+  deleteGtt: (triggerId: number | string) => Promise<void>;
   holdings: Holding[];
   fetchHoldings: () => Promise<void>;
   holdingsError: boolean;
@@ -204,6 +214,8 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   availableCash: null,
   optionChainRows: [],
   orders: [],
+  gtts: [],
+  gttsError: false,
   ordersError: false,
   holdings: [],
   holdingsError: false,
@@ -222,7 +234,9 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   activePaneId: "primary",
   isWatchlistCollapsed: localStorage.getItem("watchlistCollapsed") === "true",
   slSettings: ((): SLSettings => {
-    const defaults = { lotSize: 65, defaultQty: 65, buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5, stopLossTriggerOffset: 20, stopLossPriceOffset: 20.5 };
+    const defaults = { lotSize: 65, defaultQty: 65, buyTriggerOffset: 2, buyPriceOffset: 2.5, sellTriggerOffset: 2, sellPriceOffset: 2.5, stopLossTriggerOffset: 20, stopLossPriceOffset: 20.5,
+      gttBuyStopTrigger: 10, gttBuyStopPrice: 10.5, gttBuyTargetTrigger: 10, gttBuyTargetPrice: 9.5,
+      gttSellStopTrigger: 20, gttSellStopPrice: 20.5, gttSellTargetTrigger: 30, gttSellTargetPrice: 29.5 };
     try {
       // Merge OVER the defaults rather than replacing them: settings saved
       // before a key existed would otherwise load that key as undefined and
@@ -536,6 +550,28 @@ export const useTradingStore = create<TradingState>((set, get) => ({
       console.error("Failed to fetch orders:", err);
       set({ ordersError: true });
     }
+  },
+  async fetchGtts() {
+    try {
+      const result = await gttService.getGtts();
+      if (result.ok) {
+        set({ gtts: result.gtts, gttsError: false });
+      }
+    } catch (err) {
+      console.error("Failed to fetch GTTs:", err);
+      set({ gttsError: true });
+    }
+  },
+  async placeGtt(payload) {
+    const result = await gttService.placeGtt(payload);
+    if (result.ok && !payload.dry_run) {
+      await get().fetchGtts();
+    }
+    return result;
+  },
+  async deleteGtt(triggerId) {
+    await gttService.deleteGtt(triggerId);
+    await get().fetchGtts();
   },
   async fetchHoldings() {
     try {

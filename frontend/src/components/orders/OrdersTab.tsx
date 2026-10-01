@@ -3,6 +3,7 @@ import { Notebook, History, AlertCircle } from "lucide-react";
 import { formatPrice } from "../../utils/format";
 import { isOrderCancellable } from "../../utils/orders";
 import { useTradingStore } from "../../store/useTradingStore";
+import { GttTable } from "./GttTable";
 
 type OrdersSubTab = "orders" | "gtt";
 
@@ -47,6 +48,11 @@ export function OrdersTab() {
     void fetchOrders();
   }, [fetchOrders]);
 
+  const { gtts, gttsError, fetchGtts } = useTradingStore();
+  useEffect(() => {
+    if (activeSubTab === "gtt") void fetchGtts();
+  }, [activeSubTab, fetchGtts]);
+
   return (
     <div className="flex h-full w-full flex-col bg-white">
       {/* Secondary tab bar — active tab gets the orange underline. */}
@@ -67,7 +73,16 @@ export function OrdersTab() {
         ))}
       </div>
 
-      {activeSubTab === "orders" && ordersError ? (
+      {activeSubTab === "gtt" && gttsError ? (
+        <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+          <AlertCircle className="h-14 w-14 text-[#e5793b]" strokeWidth={1.25} />
+          <p className="mt-5 max-w-md text-[15px] leading-6 text-[#444]">
+            Couldn't load your GTTs. Your Zerodha session may have expired — reconnect the account and try again.
+          </p>
+        </div>
+      ) : activeSubTab === "gtt" && gtts.length > 0 ? (
+        <GttTable />
+      ) : activeSubTab === "orders" && ordersError ? (
         <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
           <AlertCircle className="h-14 w-14 text-[#e5793b]" strokeWidth={1.25} />
           <p className="mt-5 max-w-md text-[15px] leading-6 text-[#444]">

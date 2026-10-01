@@ -52,6 +52,12 @@ SUPPORTED_HISTORICAL_INTERVALS = {
     "week",
 }
 
+# Exchange freeze quantity per underlying: the most one order may carry. A GTT
+# above it is split into several GTTs. Underlyings not listed are not split.
+GTT_FREEZE_LIMITS: dict[str, int] = {
+    "NIFTY": 1755,
+}
+
 
 FRONTEND_URL = os.getenv("APP_URL", "http://127.0.0.1:5173").rstrip("/")
 # Mark the session cookie Secure whenever the app is served over HTTPS (the
@@ -637,6 +643,110 @@ class ZerodhaFrontendAPI:
             "order_id": order_id,
         }
 
+    def place_gtt(self, payload: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
+        """Place an OCO (two-leg) GTT exit: a stop loss and a target, where
+        whichever triggers first fires and Kite cancels the other.
+
+        The caller supplies the exit side and both legs' trigger/limit prices;
+        the server resolves the instrument, fetches the last price Kite needs,
+        and splits the quantity at the underlying's freeze limit so no single
+        GTT asks for more than the exchange accepts in one order. Every chunk
+        is its own OCO at the same prices. With ``dry_run`` the plan is
+        validated and returned without placing anything, so the UI can show
+        the split and surface a bad price before the user confirms.
+        """
+        exit_side = str(payload.get("exit_side") or "").strip().upper()
+        if exit_side not in ("BUY", "SELL"):
+            raise ValueError("exit_side must be BUY or SELL.")
+        quantity = int(payload.get("quantity") or 0)
+        if quantity <= 0:
+            raise ValueError("quantity must be greater than 0.")
+        product = str(payload.get("product") or "NRML").strip().upper()
+        stop = _gtt_leg(payload.get("stop"), "stop")
+        target = _gtt_leg(payload.get("target"), "target")
+
+        self._ensure_instruments_loaded()
+        instrument_token = int(payload.get("instrument_token") or 0)
+        instrument = self._instrument_by_token.get(instrument_token)
+        if instrument is None:
+            raise ValueError(f"Instrument token {instrument_token} was not found.")
+
+        kite = self._get_kite()
+        quote_key = _quote_key_for_instrument(instrument)
+        quote = kite.quote([quote_key]).get(quote_key) or {}
+        last_price = _as_float(quote.get("last_price")) or 0.0
+        if last_price <= 0:
+            raise ValueError(f"No last price available for {instrument['tradingsymbol']}.")
+
+        trigger_values, legs = gtt_oco_legs(exit_side, stop, target, last_price)
+        freeze_limit = GTT_FREEZE_LIMITS.get(str(instrument.get("name") or "").upper())
+        chunks = split_by_freeze_limit(quantity, freeze_limit)
+        plan = {
+            "tradingsymbol": instrument["tradingsymbol"],
+            "exchange": instrument["exchange"],
+            "exit_side": exit_side,
+            "last_price": last_price,
+            "trigger_values": trigger_values,
+            "freeze_limit": freeze_limit,
+            "quantities": chunks,
+        }
+        if dry_run:
+            return {"ok": True, "dry_run": True, **plan}
+
+        trigger_ids: list[Any] = []
+        for chunk in chunks:
+            orders = [
+                {
+                    "transaction_type": exit_side,
+                    "quantity": chunk,
+                    "order_type": kite.ORDER_TYPE_LIMIT,
+                    "product": product,
+                    "price": leg_price,
+                }
+                for leg_price in legs
+            ]
+            try:
+                result = kite.place_gtt(
+                    trigger_type=kite.GTT_TYPE_OCO,
+                    tradingsymbol=instrument["tradingsymbol"],
+                    exchange=instrument["exchange"],
+                    trigger_values=trigger_values,
+                    last_price=last_price,
+                    orders=orders,
+                )
+            except Exception as exc:
+                if not trigger_ids:
+                    raise
+                # Earlier chunks are live on Kite; say so rather than leaving
+                # the caller to believe nothing was placed.
+                placed = ", ".join(str(t) for t in trigger_ids)
+                raise RuntimeError(
+                    f"GTT {len(trigger_ids) + 1} of {len(chunks)} failed ({exc}). "
+                    f"Already placed: {placed} — check the GTT tab."
+                ) from exc
+            trigger_ids.append((result or {}).get("trigger_id"))
+
+        return {
+            "ok": True,
+            "message": f"{len(trigger_ids)} OCO GTT{'s' if len(trigger_ids) > 1 else ''} placed for {instrument['tradingsymbol']}.",
+            "trigger_ids": trigger_ids,
+            **plan,
+        }
+
+    def get_gtts(self) -> dict[str, Any]:
+        """List the account's GTTs as Kite returns them."""
+        kite = self._get_kite()
+        return {"ok": True, "gtts": kite.get_gtts()}
+
+    def delete_gtt(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Delete a GTT by trigger id."""
+        trigger_id = str(payload.get("trigger_id") or "").strip()
+        if not trigger_id.isdigit():
+            raise ValueError("trigger_id is required to delete a GTT.")
+        kite = self._get_kite()
+        kite.delete_gtt(int(trigger_id))
+        return {"ok": True, "message": f"GTT {trigger_id} deleted.", "trigger_id": trigger_id}
+
     def get_orders(self) -> dict[str, Any]:
         kite = self._get_kite()
         orders = kite.orders()
@@ -1100,6 +1210,9 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                 if parsed.path == "/api/orders/list":
                     self._send_json(api.get_orders())
                     return
+                if parsed.path == "/api/gtt":
+                    self._send_json(api.get_gtts())
+                    return
                 if parsed.path == "/api/holdings":
                     self._send_json(api.get_holdings())
                     return
@@ -1317,6 +1430,27 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                         return
                     self._send_json(api.cancel_order(body))
                     return
+                if parsed.path == "/api/gtt":
+                    body = self._read_json()
+                    exit_side = str(body.get("exit_side") or "").strip().upper()
+                    if not role_allows_gtt_exit(user["role"], exit_side):
+                        self._send_json(
+                            {"ok": False, "error": f"Your role ({user['role']}) cannot place a {exit_side or 'GTT'} exit."},
+                            status=403,
+                        )
+                        return
+                    self._send_json(api.place_gtt(body, dry_run=bool(body.get("dry_run"))))
+                    return
+                if parsed.path == "/api/gtt/delete":
+                    body = self._read_json()
+                    if not role_can_cancel(user["role"]):
+                        self._send_json(
+                            {"ok": False, "error": f"Your role ({user['role']}) cannot delete GTTs."},
+                            status=403,
+                        )
+                        return
+                    self._send_json(api.delete_gtt(body))
+                    return
                 if parsed.path == "/api/orders":
                     body = self._read_json()
                     side = str(body.get("side") or "BUY").strip().upper()
@@ -1483,6 +1617,86 @@ def role_allows_side(role: str, side: str, order_type: str = "") -> bool:
     if _is_protective_stop(order_type):
         return True
     return side == ("BUY" if role == "buyer" else "SELL")
+
+
+def role_allows_gtt_exit(role: str, exit_side: str) -> bool:
+    """Whether a role may place an OCO GTT exiting on ``exit_side``.
+
+    A GTT here only ever closes a position, so its side is the opposite of the
+    role's own: a buyer exits with a SELL, a seller with a BUY. Pinning it that
+    way means a single-side role cannot use a GTT to open the side it is not
+    allowed to trade. Traders and super admins may exit either way.
+    """
+    if role in ("trader", "super_admin"):
+        return exit_side in ("BUY", "SELL")
+    if role == "buyer":
+        return exit_side == "SELL"
+    if role == "seller":
+        return exit_side == "BUY"
+    return False
+
+
+def split_by_freeze_limit(quantity: int, freeze_limit: int | None) -> list[int]:
+    """Split ``quantity`` into chunks no larger than ``freeze_limit``.
+
+    3000 at 1755 → [1755, 1245]. A quantity at or under the limit, or no limit
+    at all, stays one chunk.
+    """
+    if quantity <= 0:
+        raise ValueError("quantity must be greater than 0.")
+    if not freeze_limit or freeze_limit <= 0 or quantity <= freeze_limit:
+        return [quantity]
+    full, rest = divmod(quantity, freeze_limit)
+    return [freeze_limit] * full + ([rest] if rest else [])
+
+
+def _gtt_leg(raw: Any, name: str) -> tuple[float, float]:
+    """Parse one GTT leg ``{"trigger": .., "price": ..}`` into ``(trigger, price)``."""
+    if not isinstance(raw, dict):
+        raise ValueError(f"{name} leg is required.")
+    trigger = _as_float(raw.get("trigger"))
+    price = _as_float(raw.get("price"))
+    if not trigger or not price or trigger <= 0 or price <= 0:
+        raise ValueError(f"{name} leg needs a positive trigger and price.")
+    return trigger, price
+
+
+def gtt_oco_legs(
+    exit_side: str,
+    stop: tuple[float, float],
+    target: tuple[float, float],
+    last_price: float,
+) -> tuple[list[float], list[float]]:
+    """Order an OCO's legs the way Kite expects and validate them.
+
+    Kite takes a two-leg GTT as ascending ``trigger_values`` with the orders
+    in the same order, so the result is ``([low, high] triggers, [low, high]
+    limit prices)``. Exiting a long (SELL), the stop is the low leg and the
+    target the high one; exiting a short (BUY) it is the other way round.
+
+    Both legs must straddle the last price, or one would trigger at once.
+    Each limit must sit on the fill side of its trigger — at or below it for
+    a SELL, at or above for a BUY — so the leg fills once triggered.
+    """
+    stop_trigger, stop_price = stop
+    target_trigger, target_price = target
+    if exit_side == "SELL":
+        if not stop_trigger < last_price < target_trigger:
+            raise ValueError(
+                f"Stop {stop_trigger} and target {target_trigger} must sit either side of the last price {last_price}."
+            )
+        if stop_price > stop_trigger or target_price > target_trigger:
+            raise ValueError("A SELL leg's limit price must not be above its trigger.")
+        return [stop_trigger, target_trigger], [stop_price, target_price]
+    if exit_side == "BUY":
+        if not target_trigger < last_price < stop_trigger:
+            raise ValueError(
+                f"Target {target_trigger} and stop {stop_trigger} must sit either side of the last price {last_price}."
+            )
+        if stop_price < stop_trigger or target_price < target_trigger:
+            raise ValueError("A BUY leg's limit price must not be below its trigger.")
+        return [target_trigger, stop_trigger], [target_price, stop_price]
+    raise ValueError("exit_side must be BUY or SELL.")
 
 
 def role_can_cancel(role: str) -> bool:

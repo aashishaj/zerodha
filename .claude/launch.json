@@ -2,6 +2,18 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "api",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "set -a; [ -f .env ] && source .env; set +a; exec venv/bin/python run.py api --host 127.0.0.1 --port 8080"],
+      "port": 8080
+    },
+    {
+      "name": "auth-callback",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "set -a; [ -f .env ] && source .env; set +a; exec venv/bin/python run.py auth-server --frontend-url http://localhost:5173"],
+      "port": 8766
+    },
+    {
       "name": "frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

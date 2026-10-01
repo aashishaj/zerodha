@@ -18,18 +18,39 @@ from zerodha_app.api_server import (
     _resample_rows_by_minutes,
     _resample_rows_by_week,
     _is_token_error,
+    gtt_oco_legs,
+    role_allows_gtt_exit,
     role_allows_side,
     role_can_cancel,
+    split_by_freeze_limit,
 )
 from zerodha_app.config import Settings
 
 
 class FakeKiteAPI:
     VARIETY_REGULAR = "regular"
+    ORDER_TYPE_LIMIT = "LIMIT"
+    GTT_TYPE_OCO = "two-leg"
 
     def __init__(self) -> None:
         self.quote_calls = []
         self.cancel_calls: list[tuple[str, str]] = []
+        self.gtt_calls: list[dict] = []
+        self.deleted_gtts: list[int] = []
+        self.fail_gtt_call: int | None = None
+
+    def place_gtt(self, **kwargs):
+        if self.fail_gtt_call == len(self.gtt_calls):
+            raise RuntimeError("freeze quantity exceeded")
+        self.gtt_calls.append(kwargs)
+        return {"trigger_id": 900 + len(self.gtt_calls)}
+
+    def get_gtts(self):
+        return [{"id": 901, "type": "two-leg", "status": "active"}]
+
+    def delete_gtt(self, trigger_id):
+        self.deleted_gtts.append(trigger_id)
+        return {"trigger_id": trigger_id}
 
     def cancel_order(self, variety, order_id):
         self.cancel_calls.append((variety, order_id))
@@ -379,6 +400,172 @@ class CancelOrderTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 api.cancel_order(payload)
         self.assertEqual(api._kite_by_account[None][0].cancel_calls, [])
+
+
+class GttTests(unittest.TestCase):
+    def _build_api(self) -> ZerodhaFrontendAPI:
+        settings = Settings(
+            api_key="key",
+            api_secret="secret",
+            token_cache_path=Path("tokens.json"),
+            watchlist_path=Path("watchlist.json"),
+        )
+        api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+        api._kite_by_account[None] = (FakeKiteAPI(), "test-token", "key")
+        return api
+
+    def _kite(self, api: ZerodhaFrontendAPI) -> FakeKiteAPI:
+        return api._kite_by_account[None][0]
+
+    # The CE's fake last price is 235.2. Option buying bought at 235:
+    # stop 225 / 224.5, target 245 / 244.5 (limit on the fill side).
+    _LONG_EXIT = {
+        "instrument_token": 101,
+        "exit_side": "SELL",
+        "product": "NRML",
+        "stop": {"trigger": 225, "price": 224.5},
+        "target": {"trigger": 245, "price": 244.5},
+    }
+
+    def test_quantity_over_the_freeze_limit_places_two_ocos(self):
+        api = self._build_api()
+        result = api.place_gtt({**self._LONG_EXIT, "quantity": 3000})
+        calls = self._kite(api).gtt_calls
+        self.assertEqual([c["orders"][0]["quantity"] for c in calls], [1755, 1245])
+        self.assertEqual(result["trigger_ids"], [901, 902])
+        for call in calls:
+            self.assertEqual(call["trigger_type"], "two-leg")
+            self.assertEqual(call["tradingsymbol"], "NIFTY052224000CE")
+            self.assertEqual(call["exchange"], "NFO")
+            self.assertEqual(call["last_price"], 235.2)
+            self.assertEqual(call["trigger_values"], [225, 245])
+            self.assertEqual([o["price"] for o in call["orders"]], [224.5, 244.5])
+            self.assertTrue(all(o["transaction_type"] == "SELL" for o in call["orders"]))
+            self.assertTrue(all(o["order_type"] == "LIMIT" for o in call["orders"]))
+
+    def test_quantity_within_the_freeze_limit_places_one_oco(self):
+        api = self._build_api()
+        api.place_gtt({**self._LONG_EXIT, "quantity": 1755})
+        self.assertEqual(len(self._kite(api).gtt_calls), 1)
+
+    def test_short_exit_puts_target_first(self):
+        # Option selling sold at 235: stop 255 / 255.5, target 205 / 205.5.
+        api = self._build_api()
+        api.place_gtt({
+            "instrument_token": 101,
+            "exit_side": "BUY",
+            "quantity": 65,
+            "stop": {"trigger": 255, "price": 255.5},
+            "target": {"trigger": 205, "price": 205.5},
+        })
+        call = self._kite(api).gtt_calls[0]
+        self.assertEqual(call["trigger_values"], [205, 255])
+        self.assertEqual([o["price"] for o in call["orders"]], [205.5, 255.5])
+        self.assertTrue(all(o["transaction_type"] == "BUY" for o in call["orders"]))
+
+    def test_dry_run_returns_the_plan_without_placing(self):
+        api = self._build_api()
+        result = api.place_gtt({**self._LONG_EXIT, "quantity": 3000}, dry_run=True)
+        self.assertTrue(result["dry_run"])
+        self.assertEqual(result["quantities"], [1755, 1245])
+        self.assertEqual(result["freeze_limit"], 1755)
+        self.assertEqual(self._kite(api).gtt_calls, [])
+
+    def test_failure_after_a_placed_chunk_names_it(self):
+        api = self._build_api()
+        self._kite(api).fail_gtt_call = 1
+        with self.assertRaises(RuntimeError) as ctx:
+            api.place_gtt({**self._LONG_EXIT, "quantity": 3000})
+        self.assertIn("901", str(ctx.exception))
+
+    def test_rejects_bad_input(self):
+        api = self._build_api()
+        bad = [
+            {**self._LONG_EXIT, "quantity": 0},
+            {**self._LONG_EXIT, "quantity": 65, "exit_side": "HOLD"},
+            {**self._LONG_EXIT, "quantity": 65, "instrument_token": 999},
+            {**self._LONG_EXIT, "quantity": 65, "stop": None},
+        ]
+        for payload in bad:
+            with self.assertRaises(ValueError):
+                api.place_gtt(payload)
+        self.assertEqual(self._kite(api).gtt_calls, [])
+
+    def test_list_and_delete(self):
+        api = self._build_api()
+        self.assertEqual(api.get_gtts()["gtts"][0]["id"], 901)
+        api.delete_gtt({"trigger_id": "901"})
+        self.assertEqual(self._kite(api).deleted_gtts, [901])
+        with self.assertRaises(ValueError):
+            api.delete_gtt({"trigger_id": ""})
+
+
+class SplitByFreezeLimitTests(unittest.TestCase):
+    def test_splits_at_the_limit(self):
+        self.assertEqual(split_by_freeze_limit(3000, 1755), [1755, 1245])
+        self.assertEqual(split_by_freeze_limit(4000, 1755), [1755, 1755, 490])
+        self.assertEqual(split_by_freeze_limit(3510, 1755), [1755, 1755])
+
+    def test_at_or_under_the_limit_is_one_chunk(self):
+        self.assertEqual(split_by_freeze_limit(1755, 1755), [1755])
+        self.assertEqual(split_by_freeze_limit(65, 1755), [65])
+
+    def test_no_limit_is_one_chunk(self):
+        self.assertEqual(split_by_freeze_limit(3000, None), [3000])
+
+    def test_non_positive_quantity_is_rejected(self):
+        with self.assertRaises(ValueError):
+            split_by_freeze_limit(0, 1755)
+
+
+class GttOcoLegsTests(unittest.TestCase):
+    def test_long_exit_orders_stop_then_target(self):
+        self.assertEqual(
+            gtt_oco_legs("SELL", (90, 89.5), (110, 109.5), 100),
+            ([90, 110], [89.5, 109.5]),
+        )
+
+    def test_short_exit_orders_target_then_stop(self):
+        self.assertEqual(
+            gtt_oco_legs("BUY", (120, 120.5), (70, 70.5), 100),
+            ([70, 120], [70.5, 120.5]),
+        )
+
+    def test_legs_must_straddle_the_last_price(self):
+        with self.assertRaises(ValueError):
+            gtt_oco_legs("SELL", (90, 89.5), (110, 109.5), 112)
+        with self.assertRaises(ValueError):
+            gtt_oco_legs("BUY", (120, 120.5), (70, 70.5), 65)
+
+    def test_limits_must_sit_on_the_fill_side(self):
+        # A SELL limit above its trigger, or a BUY limit below it, may never fill.
+        with self.assertRaises(ValueError):
+            gtt_oco_legs("SELL", (90, 90.5), (110, 109.5), 100)
+        with self.assertRaises(ValueError):
+            gtt_oco_legs("SELL", (90, 89.5), (110, 110.5), 100)
+        with self.assertRaises(ValueError):
+            gtt_oco_legs("BUY", (120, 119.5), (70, 70.5), 100)
+        with self.assertRaises(ValueError):
+            gtt_oco_legs("BUY", (120, 120.5), (70, 69.5), 100)
+
+
+class RoleAllowsGttExitTests(unittest.TestCase):
+    def test_single_side_roles_exit_on_the_opposite_side_only(self):
+        self.assertTrue(role_allows_gtt_exit("buyer", "SELL"))
+        self.assertFalse(role_allows_gtt_exit("buyer", "BUY"))
+        self.assertTrue(role_allows_gtt_exit("seller", "BUY"))
+        self.assertFalse(role_allows_gtt_exit("seller", "SELL"))
+
+    def test_trader_and_super_admin_exit_either_way(self):
+        for role in ("trader", "super_admin"):
+            self.assertTrue(role_allows_gtt_exit(role, "BUY"))
+            self.assertTrue(role_allows_gtt_exit(role, "SELL"))
+            self.assertFalse(role_allows_gtt_exit(role, ""))
+
+    def test_unknown_roles_get_nothing(self):
+        for role in ("viewer", ""):
+            self.assertFalse(role_allows_gtt_exit(role, "BUY"))
+            self.assertFalse(role_allows_gtt_exit(role, "SELL"))
 
 
 class RoleCanCancelTests(unittest.TestCase):

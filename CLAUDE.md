@@ -183,6 +183,9 @@ Orders, portfolio & watchlist:
 | GET | `/api/orders/list` | Today's orders |
 | POST | `/api/orders` | Place a Kite buy/sell order (role-gated by side) |
 | POST | `/api/orders/cancel` | Cancel an open order |
+| GET | `/api/gtt` | List the account's GTTs |
+| POST | `/api/gtt` | Place an OCO GTT exit (stop + target), split at the underlying's freeze limit (`GTT_FREEZE_LIMITS`); `dry_run: true` returns the plan only |
+| POST | `/api/gtt/delete` | Delete a GTT by `trigger_id` |
 | GET | `/api/holdings` | Long-term holdings |
 | GET | `/api/positions` | Open positions |
 | GET | `/api/watchlist` | Load watchlist file |
