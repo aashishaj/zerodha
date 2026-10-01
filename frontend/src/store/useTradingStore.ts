@@ -442,12 +442,20 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   },
   async selectInstrument(instrument) {
     const key = `${instrument.instrument_token}:${get().timeframe}`;
+    // Only show the loader when candles actually have to be fetched. The loader
+    // replaces the chart, so flashing it for a cached instrument (e.g. clicking
+    // the row already open) rebuilt the chart and threw away the user's zoom.
+    if (get().candles[key]) {
+      set({ selectedInstrument: instrument });
+      return;
+    }
     set({ selectedInstrument: instrument, loadingChart: true, loadingInstrumentToken: instrument.instrument_token });
-    if (!get().candles[key]) {
+    try {
       const candles = await chartService.getCandles(instrument.instrument_token, get().timeframe);
       set((state) => ({ candles: { ...state.candles, [key]: mergeCandles(state.candles[key], candles) } }));
+    } finally {
+      set({ loadingChart: false, loadingInstrumentToken: null });
     }
-    set({ loadingChart: false, loadingInstrumentToken: null });
   },
   async setCompareInstrument(instrument) {
     if (!instrument) {

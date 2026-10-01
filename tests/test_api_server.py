@@ -38,12 +38,18 @@ class FakeKiteAPI:
         self.gtt_calls: list[dict] = []
         self.deleted_gtts: list[int] = []
         self.fail_gtt_call: int | None = None
+        self.history_calls: list[tuple] = []
 
     def place_gtt(self, **kwargs):
         if self.fail_gtt_call == len(self.gtt_calls):
             raise RuntimeError("freeze quantity exceeded")
         self.gtt_calls.append(kwargs)
         return {"trigger_id": 900 + len(self.gtt_calls)}
+
+    def historical_data(self, token, from_time, to_time, interval):
+        self.history_calls.append((from_time, to_time, interval))
+        # One bar, like an incremental poll just after a minute boundary.
+        return [{"date": datetime(2026, 10, 1, 10, 35), "open": 1, "high": 1, "low": 1, "close": 1, "volume": 0}]
 
     def get_gtts(self):
         return [{"id": 901, "type": "two-leg", "status": "active"}]
@@ -498,6 +504,36 @@ class GttTests(unittest.TestCase):
         self.assertEqual(self._kite(api).deleted_gtts, [901])
         with self.assertRaises(ValueError):
             api.delete_gtt({"trigger_id": ""})
+
+
+class HistoricalFallbackTests(unittest.TestCase):
+    def _build_api(self) -> ZerodhaFrontendAPI:
+        settings = Settings(
+            api_key="key",
+            api_secret="secret",
+            token_cache_path=Path("tokens.json"),
+            watchlist_path=Path("watchlist.json"),
+        )
+        api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+        api._kite_by_account[None] = (FakeKiteAPI(), "test-token", "key")
+        return api
+
+    def test_incremental_poll_does_not_fall_back_to_a_month(self):
+        # A poll from the last candle returns few rows by design; widening it
+        # to 30 days reshaped the chart every 10s and snapped the zoom back.
+        api = self._build_api()
+        rows = api.historical(101, "minute", "2026-10-01T10:34:00+05:30")
+        calls = api._kite_by_account[None][0].history_calls
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], datetime(2026, 10, 1, 10, 34))
+        self.assertEqual(len(rows), 1)
+
+    def test_initial_load_still_falls_back_when_sparse(self):
+        api = self._build_api()
+        api.historical(101, "minute")
+        calls = api._kite_by_account[None][0].history_calls
+        self.assertEqual(len(calls), 2)
+        self.assertLess(calls[1][0], calls[0][0])
 
 
 class SplitByFreezeLimitTests(unittest.TestCase):

@@ -502,13 +502,21 @@ class ZerodhaFrontendAPI:
         to_time = _parse_datetime_param(to_value) or _ist_now()
         from_time = _parse_datetime_param(from_value) or (to_time - _interval_window(interval))
         source_interval = _source_interval(interval)
-        rows = _load_history_with_fallback(
-            kite=kite,
-            token=instrument_token,
-            from_time=from_time,
-            to_time=to_time,
-            kite_interval=source_interval,
-        )
+        if from_value:
+            # An explicit `from` is the chart's incremental poll ("bars since my
+            # last one"), which legitimately returns only one or two rows. The
+            # closed-market fallback would read that as "no data" and send a
+            # whole month back instead, reshaping the chart and snapping the
+            # user's zoom, so it is only applied to the initial load.
+            rows = kite.historical_data(instrument_token, from_time, to_time, source_interval)
+        else:
+            rows = _load_history_with_fallback(
+                kite=kite,
+                token=instrument_token,
+                from_time=from_time,
+                to_time=to_time,
+                kite_interval=source_interval,
+            )
         rows = _transform_rows_for_interval(rows, interval)
         return [_normalize_candle(row) for row in rows]
 

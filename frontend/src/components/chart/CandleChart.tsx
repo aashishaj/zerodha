@@ -1,5 +1,5 @@
 import { forwardRef, memo, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { ColorType, CrosshairMode, LineStyle, TickMarkType, createChart, type LineWidth } from "lightweight-charts";
+import { ColorType, CrosshairMode, LineStyle, TickMarkType, createChart, type LineWidth, type LogicalRange } from "lightweight-charts";
 import type { Candle, IndicatorInstance, IndicatorLineStyle, VwapAnchorPeriod } from "../../types";
 import { parseChartDate } from "../../utils/dates";
 
@@ -224,6 +224,28 @@ function normalizeCandles(rawCandles: Candle[]): {
   };
 }
 
+/**
+ * Re-anchor a saved visible range after the bars were replaced wholesale.
+ * Logical ranges count bars from the start, so bars added or removed before
+ * the view would make the same numbers point at different candles. Find the
+ * candle that was at the right edge in the new data and shift the whole range
+ * by how far it moved — same candles, same zoom.
+ */
+function shiftRangeToSameCandles(range: LogicalRange, prev: ChartCandle[], next: ChartCandle[]): LogicalRange {
+  if (!prev.length || !next.length) return range;
+  const anchorIdx = Math.min(Math.max(Math.round(range.to), 0), prev.length - 1);
+  const anchorTime = prev[anchorIdx].time as unknown as number;
+  let lo = 0;
+  let hi = next.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if ((next[mid].time as unknown as number) < anchorTime) lo = mid + 1;
+    else hi = mid;
+  }
+  const delta = lo - anchorIdx;
+  return { from: (range.from + delta) as never, to: (range.to + delta) as never };
+}
+
 export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(function CandleChart(
   { candles, lineColor = "#1976d2", viewKey, indicatorInstances, onHoverCandle, onClickCandle, onIndicatorValues },
   forwardedRef,
@@ -243,6 +265,8 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
   // Time of the last bar applied to the series; used to detect when merged
   // data changed shape mid-array (series.update only accepts the newest bar)
   const prevLastTimeRef = useRef<number | null>(null);
+  // The bars the series held before the latest sync, to re-anchor the view.
+  const prevChartDataRef = useRef<ChartCandle[]>([]);
   // Accumulates live H/L/C between historical polls for the forming bar
   const liveBarRef = useRef<{ time: number; open: number; high: number; low: number; close: number } | null>(null);
 
@@ -355,10 +379,6 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
 
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return;
-
-    // TEMP diagnostic: detect remounts vs view-resets behind the zoom-collapse.
-    const diagId = Math.random().toString(36).slice(2, 7);
-    console.info("[chartdiag] MOUNT", diagId, viewKey);
 
     const chart = createChart(containerRef.current, {
       // Sized manually via the guarded ResizeObserver below. autoSize throws
@@ -503,7 +523,6 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     resizeObserver.observe(containerRef.current);
 
     return () => {
-      console.info("[chartdiag] UNMOUNT", diagId, viewKey);
       resizeObserver.disconnect();
       chart.unsubscribeCrosshairMove(handleCrosshairMove);
       chart.unsubscribeClick(handleClick);
@@ -514,6 +533,7 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
       lastFitViewKeyRef.current = undefined;
       prevDataLengthRef.current = 0;
       prevLastTimeRef.current = null;
+      prevChartDataRef.current = [];
       liveBarRef.current = null;
       chart.remove();
     };
@@ -521,6 +541,71 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     // below handles them incrementally while preserving the user's pan/zoom.
   }, [lineColor]);
 
+  useEffect(() => {
+    if (!seriesRef.current || !chartRef.current) return;
+
+    const timeScale = chartRef.current.timeScale();
+    // Capture before setData(), which would otherwise reset the time scale.
+    const savedRange = timeScale.getVisibleLogicalRange();
+    const isNewView = viewKey !== lastFitViewKeyRef.current;
+    const prev = prevDataLengthRef.current;
+    const curr = normalized.chartData.length;
+
+    // series.update() only accepts the current last bar or newer ones. If the
+    // merged data changed shape mid-array (backfill, re-sort, corrected rows),
+    // the bar at prev-1 is older than what the series already holds and
+    // update() would throw "Cannot update oldest data" — resync fully instead.
+    const start = Math.max(0, prev - 1);
+    const startTime = curr > 0 ? (normalized.chartData[Math.min(start, curr - 1)].time as unknown as number) : null;
+    const appendOnly =
+      prevLastTimeRef.current === null || (startTime !== null && startTime >= prevLastTimeRef.current);
+
+    let didFullReload = false;
+    if (isNewView || prev === 0 || curr < prev || !appendOnly) {
+      // Full reload: new instrument/timeframe, first load, shrunk or reshaped data
+      seriesRef.current.setData(normalized.chartData);
+      didFullReload = true;
+    } else {
+      // Incremental: use series.update() for the forming bar + any new bars.
+      // Starting from prev-1 catches an in-progress candle whose OHLC changed since last tick.
+      try {
+        for (let i = start; i < curr; i++) {
+          seriesRef.current.update(normalized.chartData[i]);
+        }
+      } catch {
+        // Safety net for any remaining ordering surprise — never crash the pane.
+        seriesRef.current.setData(normalized.chartData);
+        didFullReload = true;
+      }
+    }
+
+    prevDataLengthRef.current = curr;
+    prevLastTimeRef.current =
+      curr > 0 ? (normalized.chartData[curr - 1].time as unknown as number) : null;
+    liveBarRef.current = null; // re-sync from fresh historical data on next tick
+    applyPriceScale();
+
+    if (isNewView && curr > 0) {
+      timeScale.setVisibleLogicalRange({
+        from: Math.max(0, curr - 80),
+        to: curr + 2,
+      });
+      lastFitViewKeyRef.current = viewKey;
+    } else if (didFullReload && savedRange) {
+      // Non-view-changing full reload: keep the user on the same candles at the
+      // same zoom. The range is in bar positions, so if bars were added or
+      // dropped ahead of the view, restoring it as-is would land on different
+      // candles — shift it by however far the right-edge candle moved.
+      timeScale.setVisibleLogicalRange(
+        shiftRangeToSameCandles(savedRange, prevChartDataRef.current, normalized.chartData),
+      );
+    }
+    prevChartDataRef.current = normalized.chartData;
+  }, [normalized.chartData, viewKey]);
+
+  // Runs AFTER the candle sync above (effects run in declaration order): the
+  // time scale is the union of every series' times, so drawing indicators over
+  // the new bars before the candles have them would shift the timeline first.
   // Sync indicator line series with the instance list.
   // - create series for new instances, remove series for deleted ones
   // - apply color / lineWidth / visibility via applyOptions (no chart recreation)
@@ -593,64 +678,6 @@ export const CandleChart = memo(forwardRef<CandleChartHandle, CandleChartProps>(
     indicatorValuesCallbackRef.current?.(values);
   }, [normalized, indicatorInstances]);
 
-  useEffect(() => {
-    if (!seriesRef.current || !chartRef.current) return;
-
-    const timeScale = chartRef.current.timeScale();
-    // Capture before setData(), which would otherwise reset the time scale.
-    const savedRange = timeScale.getVisibleLogicalRange();
-    const isNewView = viewKey !== lastFitViewKeyRef.current;
-    const prev = prevDataLengthRef.current;
-    const curr = normalized.chartData.length;
-
-    // series.update() only accepts the current last bar or newer ones. If the
-    // merged data changed shape mid-array (backfill, re-sort, corrected rows),
-    // the bar at prev-1 is older than what the series already holds and
-    // update() would throw "Cannot update oldest data" — resync fully instead.
-    const start = Math.max(0, prev - 1);
-    const startTime = curr > 0 ? (normalized.chartData[Math.min(start, curr - 1)].time as unknown as number) : null;
-    const appendOnly =
-      prevLastTimeRef.current === null || (startTime !== null && startTime >= prevLastTimeRef.current);
-
-    let didFullReload = false;
-    if (isNewView || prev === 0 || curr < prev || !appendOnly) {
-      // Full reload: new instrument/timeframe, first load, shrunk or reshaped data
-      seriesRef.current.setData(normalized.chartData);
-      didFullReload = true;
-    } else {
-      // Incremental: use series.update() for the forming bar + any new bars.
-      // Starting from prev-1 catches an in-progress candle whose OHLC changed since last tick.
-      try {
-        for (let i = start; i < curr; i++) {
-          seriesRef.current.update(normalized.chartData[i]);
-        }
-      } catch {
-        // Safety net for any remaining ordering surprise — never crash the pane.
-        seriesRef.current.setData(normalized.chartData);
-        didFullReload = true;
-      }
-    }
-
-    prevDataLengthRef.current = curr;
-    prevLastTimeRef.current =
-      curr > 0 ? (normalized.chartData[curr - 1].time as unknown as number) : null;
-    liveBarRef.current = null; // re-sync from fresh historical data on next tick
-    applyPriceScale();
-
-    if (isNewView && curr > 0) {
-      // TEMP diagnostic: this is the branch that resets zoom to the default window.
-      console.info("[chartdiag] VIEW-RESET", viewKey, "prev=", prev, "curr=", curr, "fullReload=", didFullReload);
-      timeScale.setVisibleLogicalRange({
-        from: Math.max(0, curr - 80),
-        to: curr + 2,
-      });
-      lastFitViewKeyRef.current = viewKey;
-    } else if (didFullReload && savedRange) {
-      // Non-view-changing full reload: keep the user where they were panned/zoomed.
-      console.info("[chartdiag] full-reload (range preserved)", viewKey, "appendOnly=", appendOnly);
-      timeScale.setVisibleLogicalRange(savedRange);
-    }
-  }, [normalized.chartData, viewKey]);
 
   return <div ref={containerRef} className="h-full w-full" />;
 }));
