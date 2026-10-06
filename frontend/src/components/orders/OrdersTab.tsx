@@ -115,7 +115,7 @@ export function OrdersTab() {
             <tbody>
               {orders.map((order, i) => {
                 const qty = `${order.filled_quantity ?? 0} / ${order.quantity}`;
-                const time = order.placed_at ?? order.timestamp ?? "";
+                const time = order.order_timestamp ?? order.placed_at ?? order.timestamp ?? "";
                 const timeShort = time.includes("T") ? time.split("T")[1]?.slice(0, 8) : time.slice(0, 8);
                 return (
                   <tr key={order.order_id ?? i} className="border-b border-[#f0f2f5] hover:bg-[#f7f8fa]">

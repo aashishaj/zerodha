@@ -1,6 +1,6 @@
 import { Ghost, Minus, Plus, RefreshCw, RotateCcw, X } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Candle, Instrument, Quote, Timeframe } from "../../types";
+import type { Candle, Instrument, Order, Quote, Timeframe } from "../../types";
 import { CandleChart, type CandleChartHandle } from "./CandleChart";
 import { GttConfirmPopup } from "./GttConfirmPopup";
 import { IndicatorLegend } from "./IndicatorLegend";
@@ -12,6 +12,22 @@ import { Loader } from "../common/Loader";
 import { IconButton } from "../common/IconButton";
 import { useTradingStore } from "../../store/useTradingStore";
 import { useAllowedSides } from "../../store/useAuthStore";
+
+/** Kite's terminal order statuses; anything else may still fill. */
+const TERMINAL_ORDER_STATUSES = new Set(["COMPLETE", "CANCELLED", "REJECTED"]);
+const ORDER_POLL_MS = 5000;
+
+/**
+ * The most recently placed order. Real Kite orders carry `order_timestamp`;
+ * on equal or missing times the later list entry wins, since Kite lists
+ * orders oldest first.
+ */
+function latestByPlacement(orders: Order[]): Order | null {
+  if (!orders.length) return null;
+  const placedTime = (o: Order) =>
+    new Date(o.order_timestamp ?? o.placed_at ?? o.timestamp ?? 0).getTime() || 0;
+  return orders.reduce((latest, o) => (placedTime(o) >= placedTime(latest) ? o : latest));
+}
 
 type DateRangeLabel = "1D" | "5D" | "1M" | "3M" | "6M" | "1Y" | "5Y";
 
@@ -78,39 +94,53 @@ export const ChartPane = memo(function ChartPane({
     void fetchOrders();
   }, [fetchOrders]);
 
+  // Stop (SL / SL-M) orders for this pane's instrument — the entries both exit
+  // buttons hang off. A MARKET or LIMIT order placed by hand is not one.
+  const stopOrdersForInstrument = useMemo(() => {
+    if (!instrument) return [];
+    return orders.filter(
+      (o) =>
+        o.tradingsymbol === instrument.tradingsymbol &&
+        ["SL", "SLM"].includes((o.order_type ?? "").toUpperCase().replace("-", "")),
+    );
+  }, [orders, instrument]);
+
   // Most recent STOP order placed for this pane's instrument. Drives the Stop
   // Loss button, which stays inert until there is one: a stop is derived from an
-  // entry's price, and entries are always SL orders, so a MARKET or LIMIT order
-  // placed by hand is not something to hang a stop loss off.
-  const latestOrderForInstrument = useMemo(() => {
-    if (!instrument) return null;
-    const isStopOrder = (type: string | undefined) =>
-      ["SL", "SLM"].includes((type ?? "").toUpperCase().replace("-", ""));
-    const matching = orders.filter(
-      (o) => o.tradingsymbol === instrument.tradingsymbol && isStopOrder(o.order_type),
-    );
-    if (!matching.length) return null;
-    const placedTime = (o: (typeof matching)[number]) =>
-      new Date(o.placed_at ?? o.timestamp ?? 0).getTime() || 0;
-    return matching.reduce((latest, o) => (placedTime(o) >= placedTime(latest) ? o : latest));
-  }, [orders, instrument]);
+  // entry's price, and entries are always SL orders.
+  const latestOrderForInstrument = useMemo(
+    () => latestByPlacement(stopOrdersForInstrument),
+    [stopOrdersForInstrument],
+  );
 
   // Most recent EXECUTED stop order for this instrument — the entry an OCO GTT
   // exits. A GTT goes on only after the entry has filled, so pending entries
   // don't count; its price (not the fill) is the base for both legs.
-  const latestFilledEntry = useMemo(() => {
-    if (!instrument) return null;
-    const matching = orders.filter(
-      (o) =>
-        o.tradingsymbol === instrument.tradingsymbol &&
-        ["SL", "SLM"].includes((o.order_type ?? "").toUpperCase().replace("-", "")) &&
-        (o.status ?? "").toUpperCase() === "COMPLETE",
-    );
-    if (!matching.length) return null;
-    const placedTime = (o: (typeof matching)[number]) =>
-      new Date(o.placed_at ?? o.timestamp ?? 0).getTime() || 0;
-    return matching.reduce((latest, o) => (placedTime(o) >= placedTime(latest) ? o : latest));
-  }, [orders, instrument]);
+  const latestFilledEntry = useMemo(
+    () => latestByPlacement(stopOrdersForInstrument.filter((o) => (o.status ?? "").toUpperCase() === "COMPLETE")),
+    [stopOrdersForInstrument],
+  );
+
+  // An entry fills on Kite's side with nothing on this page noticing, so while
+  // one is still live keep re-reading the order book; otherwise the GTT button
+  // stays off until a reload. Polling stops once every entry has settled.
+  const hasLiveEntry = stopOrdersForInstrument.some(
+    (o) => !TERMINAL_ORDER_STATUSES.has((o.status ?? "").toUpperCase()),
+  );
+  useEffect(() => {
+    if (!hasLiveEntry) return;
+    const interval = window.setInterval(() => { void fetchOrders(); }, ORDER_POLL_MS);
+    return () => window.clearInterval(interval);
+  }, [hasLiveEntry, fetchOrders]);
+
+  // Coming back to the tab after a while: the entry may have filled meanwhile.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void fetchOrders();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetchOrders]);
   const [isGttOpen, setIsGttOpen] = useState(false);
 
   // Latest indicator values reported by the chart, keyed by instance id

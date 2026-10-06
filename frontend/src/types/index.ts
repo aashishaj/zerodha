@@ -206,6 +206,8 @@ export interface Order {
   filled_quantity?: number;
   pending_quantity?: number;
   average_price?: number;
+  /** Kite's placement time (ISO string); the field real orders carry. */
+  order_timestamp?: string;
   placed_at?: string;
   timestamp?: string;
 }
