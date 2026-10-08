@@ -6,6 +6,7 @@ from pathlib import Path
 
 from zerodha_app.api_server import (
     APIOptions,
+    STOP_ORDER_TAG,
     TickBroadcaster,
     ZerodhaFrontendAPI,
     _expand_minute_rows,
@@ -32,11 +33,19 @@ from zerodha_app.config import Settings
 class FakeKiteAPI:
     VARIETY_REGULAR = "regular"
     ORDER_TYPE_LIMIT = "LIMIT"
+    ORDER_TYPE_MARKET = "MARKET"
+    ORDER_TYPE_SL = "SL"
+    ORDER_TYPE_SLM = "SL-M"
+    TRANSACTION_TYPE_BUY = "BUY"
+    TRANSACTION_TYPE_SELL = "SELL"
+    PRODUCT_MIS = "MIS"
+    PRODUCT_NRML = "NRML"
     GTT_TYPE_OCO = "two-leg"
 
     def __init__(self) -> None:
         self.quote_calls = []
         self.cancel_calls: list[tuple[str, str]] = []
+        self.order_calls: list[dict] = []
         self.gtt_calls: list[dict] = []
         self.deleted_gtts: list[int] = []
         self.fail_gtt_call: int | None = None
@@ -59,6 +68,10 @@ class FakeKiteAPI:
     def delete_gtt(self, trigger_id):
         self.deleted_gtts.append(trigger_id)
         return {"trigger_id": trigger_id}
+
+    def place_order(self, **kwargs):
+        self.order_calls.append(kwargs)
+        return "2510080001"
 
     def cancel_order(self, variety, order_id):
         self.cancel_calls.append((variety, order_id))
@@ -408,6 +421,42 @@ class CancelOrderTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 api.cancel_order(payload)
         self.assertEqual(api._kite_by_account[None][0].cancel_calls, [])
+
+
+class PlaceOrderTests(unittest.TestCase):
+    def _build_api(self) -> ZerodhaFrontendAPI:
+        settings = Settings(
+            api_key="key",
+            api_secret="secret",
+            token_cache_path=Path("tokens.json"),
+            watchlist_path=Path("watchlist.json"),
+        )
+        api = ZerodhaFrontendAPI(APIOptions(settings=settings))
+        api._kite_by_account[None] = (FakeKiteAPI(), "test-token", "key")
+        return api
+
+    def _place(self, order_type: str) -> dict:
+        api = self._build_api()
+        api.place_order({
+            "side": "SELL",
+            "exchange": "NFO",
+            "tradingsymbol": "NIFTY26O1322600PE",
+            "quantity": 65,
+            "order_type": order_type,
+            "price": 165.5,
+            "trigger_price": 166,
+        })
+        return api._kite_by_account[None][0].order_calls[0]
+
+    def test_stop_orders_are_tagged(self):
+        # Kite reports a triggered SL as LIMIT (SL-M as MARKET); the tag is
+        # what still identifies the entry after it fills.
+        for order_type in ("SL", "SL-M"):
+            self.assertEqual(self._place(order_type)["tag"], STOP_ORDER_TAG)
+
+    def test_non_stop_orders_are_not_tagged(self):
+        for order_type in ("LIMIT", "MARKET"):
+            self.assertNotIn("tag", self._place(order_type))
 
 
 class GttTests(unittest.TestCase):

@@ -206,6 +206,9 @@ export interface Order {
   filled_quantity?: number;
   pending_quantity?: number;
   average_price?: number;
+  /** Kite order tag; the app tags its SL / SL-M orders (see STOP_ORDER_TAG). */
+  tag?: string | null;
+  tags?: string[] | null;
   /** Kite's placement time (ISO string); the field real orders carry. */
   order_timestamp?: string;
   placed_at?: string;

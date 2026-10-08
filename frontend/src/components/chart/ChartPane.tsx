@@ -13,6 +13,21 @@ import { IconButton } from "../common/IconButton";
 import { useTradingStore } from "../../store/useTradingStore";
 import { useAllowedSides } from "../../store/useAuthStore";
 
+/** Kite tag the API server puts on SL / SL-M orders (STOP_ORDER_TAG in api_server.py). */
+const STOP_ORDER_TAG = "stoporder";
+
+/**
+ * Whether an order was placed as a stop (SL / SL-M). Kite rewrites a
+ * triggered SL's order_type to LIMIT (SL-M to MARKET), so a filled entry is
+ * recognised by the app's tag, or failing that (orders placed before tagging,
+ * or from Kite itself) by still carrying a trigger price.
+ */
+function isStopOrder(o: Order): boolean {
+  if (["SL", "SLM"].includes((o.order_type ?? "").toUpperCase().replace("-", ""))) return true;
+  if (o.tag === STOP_ORDER_TAG || o.tags?.includes(STOP_ORDER_TAG)) return true;
+  return (o.trigger_price ?? 0) > 0;
+}
+
 /** Kite's terminal order statuses; anything else may still fill. */
 const TERMINAL_ORDER_STATUSES = new Set(["COMPLETE", "CANCELLED", "REJECTED"]);
 const ORDER_POLL_MS = 5000;
@@ -98,11 +113,7 @@ export const ChartPane = memo(function ChartPane({
   // buttons hang off. A MARKET or LIMIT order placed by hand is not one.
   const stopOrdersForInstrument = useMemo(() => {
     if (!instrument) return [];
-    return orders.filter(
-      (o) =>
-        o.tradingsymbol === instrument.tradingsymbol &&
-        ["SL", "SLM"].includes((o.order_type ?? "").toUpperCase().replace("-", "")),
-    );
+    return orders.filter((o) => o.tradingsymbol === instrument.tradingsymbol && isStopOrder(o));
   }, [orders, instrument]);
 
   // Most recent STOP order placed for this pane's instrument. Drives the Stop

@@ -70,6 +70,10 @@ GTT_FREEZE_LIMITS: dict[str, int] = {
     "NIFTY": 1755,
 }
 
+# Kite order tag put on every SL / SL-M order this app places. The frontend
+# matches on the same string (STOP_ORDER_TAG in ChartPane.tsx).
+STOP_ORDER_TAG = "stoporder"
+
 
 FRONTEND_URL = os.getenv("APP_URL", "http://127.0.0.1:5173").rstrip("/")
 # Mark the session cookie Secure whenever the app is served over HTTPS (the
@@ -641,6 +645,11 @@ class ZerodhaFrontendAPI:
             order_args["price"] = float(price)
         if trigger_price not in {None, ""}:
             order_args["trigger_price"] = float(trigger_price)
+        # Kite rewrites a triggered SL order's type to LIMIT (SL-M to MARKET),
+        # so once an entry fills its order_type no longer says it was a stop.
+        # The tag survives, and is how the chart finds entries to exit.
+        if order_type.replace("-", "") in {"SL", "SLM"}:
+            order_args["tag"] = STOP_ORDER_TAG
 
         order_id = kite.place_order(**order_args)
         return {
