@@ -22,6 +22,7 @@ from zerodha_app.auth import AuthManager
 from zerodha_app.config import Settings, load_watchlist
 from zerodha_app.dashboard import _history_window, _load_history_with_fallback
 from zerodha_app.instruments import InstrumentCatalog
+from zerodha_app.paper_kite import PaperKite, PaperTickBroadcaster, default_paper_instruments
 
 try:
     from kiteconnect import KiteConnect
@@ -93,6 +94,8 @@ class APIOptions:
     host: str = "127.0.0.1"
     port: int = 8080
     login_if_needed: bool = False
+    # Swap Kite for an in-memory PaperKite (see paper_kite.py). Local only.
+    paper_trading: bool = False
 
 
 class TickBroadcaster:
@@ -217,6 +220,44 @@ class ZerodhaFrontendAPI:
         self._rate_gates_lock = threading.Lock()
         self._clock = time.monotonic
         self._sleep = time.sleep
+        self._paper: PaperKite | None = None
+        self._paper_broadcaster: PaperTickBroadcaster | None = None
+        if options.paper_trading:
+            if FRONTEND_URL.lower().startswith("https://"):
+                raise RuntimeError(
+                    f"Refusing paper trading with APP_URL={FRONTEND_URL}: it is for local testing only."
+                )
+            self._paper = PaperKite(self._paper_instruments)
+            self._paper_broadcaster = PaperTickBroadcaster(self._paper)
+
+    @property
+    def paper_trading(self) -> bool:
+        """True when orders go to the in-memory PaperKite instead of Zerodha."""
+        return self._paper is not None
+
+    def _paper_instruments(self) -> dict[str, list[dict[str, Any]]]:
+        # Reuse the last real instrument download whatever its date, so paper
+        # mode works offline with the symbols the user knows; else a small set.
+        try:
+            cached = json.loads(self._instrument_cache_path().read_text())
+            if cached.get("by_exchange"):
+                return cached["by_exchange"]
+        except (OSError, ValueError):
+            pass
+        return default_paper_instruments()
+
+    def set_paper_price(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Move a paper instrument's price, filling or triggering what it crosses."""
+        if self._paper is None:
+            raise RuntimeError("Paper trading is not enabled.")
+        result = self._paper.set_price(int(payload.get("instrument_token") or 0), float(payload.get("price") or 0))
+        return {"ok": True, **result}
+
+    def connected_account_user_ids(self) -> set[str]:
+        """Zerodha user ids with a usable session today (every account when paper trading)."""
+        if self._paper is not None:
+            return {str(a["zerodha_user_id"]) for a in self.account_store().list_accounts()}
+        return AuthManager(self.options.settings).connected_account_user_ids()
 
     def account_store(self) -> AccountStore:
         if self._account_store is None:
@@ -276,7 +317,7 @@ class ZerodhaFrontendAPI:
         store = self.account_store()
         is_admin = user["role"] == "super_admin"
         accounts = store.list_accounts() if is_admin else store.list_accounts_for_user(user["id"])
-        connected = AuthManager(self.options.settings).connected_account_user_ids()
+        connected = self.connected_account_user_ids()
         result = []
         for account in accounts:
             summary = {
@@ -301,7 +342,7 @@ class ZerodhaFrontendAPI:
             raise ValueError("Account not found.")
         if user["role"] != "super_admin" and not store.is_assigned(user["id"], account_id):
             raise PermissionError("Account is not assigned to you.")
-        connected = AuthManager(self.options.settings).connected_account_user_ids()
+        connected = self.connected_account_user_ids()
         if account["zerodha_user_id"] not in connected:
             raise ValueError("Account is not connected. Ask an admin to connect it.")
         self.user_store().set_active_account(token, account_id)
@@ -424,7 +465,7 @@ class ZerodhaFrontendAPI:
 
     def user_accounts(self, user_id: int) -> list[dict[str, Any]]:
         """Accounts assigned to a user, tagged with today's connection state."""
-        connected = AuthManager(self.options.settings).connected_account_user_ids()
+        connected = self.connected_account_user_ids()
         return [
             {
                 "id": account["id"],
@@ -813,6 +854,8 @@ class ZerodhaFrontendAPI:
     # ── Auth helpers ─────────────────────────────────────────────────────────
 
     def get_auth_status(self) -> dict[str, Any]:
+        if self._paper is not None:
+            return {"authenticated": True}
         auth = AuthManager(self.options.settings)
         authenticated = auth.get_cached_access_token() is not None
         return {"authenticated": authenticated}
@@ -884,6 +927,8 @@ class ZerodhaFrontendAPI:
         return json.loads(target.read_text())
 
     def get_broadcaster(self) -> TickBroadcaster:
+        if self._paper_broadcaster is not None:
+            return self._paper_broadcaster  # type: ignore[return-value]
         account_user_id = self._active_account_user_id()
         with self._broadcaster_lock:
             broadcaster = self._broadcaster_by_account.get(account_user_id)
@@ -926,6 +971,8 @@ class ZerodhaFrontendAPI:
             return gate
 
     def _get_kite(self) -> Any:
+        if self._paper is not None:
+            return self._paper
         if KiteConnect is None:
             raise RuntimeError("kiteconnect is not installed. Run `pip install -r requirements.txt`.")
 
@@ -970,6 +1017,9 @@ class ZerodhaFrontendAPI:
         Kite's instrument list changes at most daily, so a dated cache lets the
         server restart without re-downloading tens of MB from the broker.
         """
+        if self._paper is not None:
+            # Never write the paper set into the real cache.
+            return self._paper.instruments_by_exchange()
         cache_path = self._instrument_cache_path()
         today = date.today().isoformat()
         try:
@@ -1056,6 +1106,8 @@ def run_api_server(options: APIOptions) -> None:
     api = ZerodhaFrontendAPI(options)
     handler = _build_handler(api)
     server = ThreadingHTTPServer((options.host, options.port), handler)
+    if api.paper_trading:
+        LOGGER.warning("PAPER TRADING: orders and GTTs are simulated in memory; nothing reaches Zerodha.")
     LOGGER.info("Starting frontend API server at http://%s:%s", options.host, options.port)
     try:
         server.serve_forever()
@@ -1162,7 +1214,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     # boot the dashboard straight into a token error. Force the
                     # user back to the picker to reconnect/reselect.
                     if active is not None:
-                        connected = AuthManager(api.options.settings).connected_account_user_ids()
+                        connected = api.connected_account_user_ids()
                         if active["zerodha_user_id"] not in connected:
                             active = None
                     self._send_json(
@@ -1170,6 +1222,7 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                             "ok": True,
                             "user": public_user(current),
                             "activeAccount": {"id": active["id"], "label": active["label"]} if active else None,
+                            "paperTrading": api.paper_trading,
                         }
                     )
                     return
@@ -1361,6 +1414,15 @@ def _build_handler(api: ZerodhaFrontendAPI) -> type[BaseHTTPRequestHandler]:
                     self._send_json({"ok": False, "error": "authentication required"}, status=401)
                     return
 
+                if parsed.path == "/api/paper/price":
+                    if not api.paper_trading:
+                        self.send_error(404, "Not found")
+                        return
+                    try:
+                        self._send_json(api.set_paper_price(self._read_json()))
+                    except ValueError as exc:
+                        self._send_json({"ok": False, "error": str(exc)}, status=400)
+                    return
                 if parsed.path == "/api/session/select-account":
                     body = self._read_json()
                     try:

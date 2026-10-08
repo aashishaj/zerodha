@@ -9,6 +9,7 @@ import { orderService } from "../services/orderService";
 import { gttService } from "../services/gttService";
 import { holdingsService } from "../services/holdingsService";
 import { positionsService } from "../services/positionsService";
+import { paperService } from "../services/paperService";
 import { parseChartDate } from "../utils/dates";
 import { formatInstrumentLabel } from "../utils/format";
 import { initialMainTab } from "../utils/views";
@@ -156,6 +157,8 @@ interface TradingState {
   positions: Position[];
   fetchPositions: () => Promise<void>;
   positionsError: boolean;
+  /** Paper trading only: move an instrument's simulated price, then refresh what it moves. */
+  setPaperPrice: (instrument: Instrument, price: number) => Promise<void>;
 }
 
 const toWatchlistItem = (instrument: Instrument, quote?: Quote): WatchlistItem => ({
@@ -593,6 +596,16 @@ export const useTradingStore = create<TradingState>((set, get) => ({
   async deleteGtt(triggerId) {
     await gttService.deleteGtt(triggerId);
     await get().fetchGtts();
+  },
+  async setPaperPrice(instrument, price) {
+    await paperService.setPrice(instrument.instrument_token, price);
+    // A move can fill an entry or fire a GTT; pull everything it touches now
+    // rather than waiting for the next poll.
+    await Promise.all([
+      get().fetchOrders(),
+      get().fetchGtts(),
+      get().refreshQuotes([instrument.tradingsymbol]),
+    ]);
   },
   async fetchHoldings() {
     try {

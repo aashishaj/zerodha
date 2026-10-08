@@ -165,6 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Trigger the interactive login flow when no cached token exists",
     )
+    api_parser.add_argument(
+        "--paper",
+        action="store_true",
+        help="Paper trading: simulate orders, GTTs and prices in memory; nothing reaches Zerodha (local only)",
+    )
 
     auth_server_parser = subparsers.add_parser(
         "auth-server",
@@ -342,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
                     host=args.host,
                     port=args.port,
                     login_if_needed=args.login_if_needed,
+                    paper_trading=args.paper,
                 )
             )
             return 0

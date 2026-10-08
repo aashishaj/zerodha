@@ -27,6 +27,7 @@ export function TopHeader() {
   const logout = useAuthStore((state) => state.logout);
   const activeAccount = useAuthStore((state) => state.activeAccount);
   const clearActiveAccount = useAuthStore((state) => state.clearActiveAccount);
+  const paperTrading = useAuthStore((state) => state.paperTrading);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const indices = ["NIFTY 50", "SENSEX"].filter((symbol) => quotes[symbol]);
 
@@ -80,6 +81,14 @@ export function TopHeader() {
       </div>
 
       <div className="flex items-center gap-2">
+        {paperTrading && (
+          <span
+            title="Orders, GTTs and prices are simulated; nothing reaches Zerodha"
+            className="mr-1 rounded-sm bg-[#9b59b6] px-2 py-1 text-[11px] font-bold tracking-wide text-white"
+          >
+            PAPER TRADING
+          </span>
+        )}
         {activeAccount && (
           <button
             onClick={clearActiveAccount}

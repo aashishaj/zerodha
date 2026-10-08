@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Candle, Instrument, Order, Quote, Timeframe } from "../../types";
 import { CandleChart, type CandleChartHandle } from "./CandleChart";
 import { GttConfirmPopup } from "./GttConfirmPopup";
+import { PaperPriceControl } from "./PaperPriceControl";
 import { IndicatorLegend } from "./IndicatorLegend";
 import { EmptyState } from "../common/EmptyState";
 import { formatExpiry, parseChartDate } from "../../utils/dates";
@@ -11,7 +12,7 @@ import { roundHalfDown } from "../../utils/price";
 import { Loader } from "../common/Loader";
 import { IconButton } from "../common/IconButton";
 import { useTradingStore } from "../../store/useTradingStore";
-import { useAllowedSides } from "../../store/useAuthStore";
+import { useAllowedSides, useAuthStore } from "../../store/useAuthStore";
 
 /** Kite tag the API server puts on SL / SL-M orders (STOP_ORDER_TAG in api_server.py). */
 const STOP_ORDER_TAG = "stoporder";
@@ -101,6 +102,7 @@ export const ChartPane = memo(function ChartPane({
   const indicatorInstances = useTradingStore((state) => state.indicatorInstances);
   const slSettings         = useTradingStore((state) => state.slSettings);
   const orders             = useTradingStore((state) => state.orders);
+  const paperTrading       = useAuthStore((state) => state.paperTrading);
   const fetchOrders        = useTradingStore((state) => state.fetchOrders);
 
   // Populate orders on mount so the SL button can derive prices from the most
@@ -474,6 +476,7 @@ export const ChartPane = memo(function ChartPane({
             </div>
           </div>
           <div className="flex items-center gap-1">
+            {paperTrading && <PaperPriceControl instrument={instrument} lastPrice={quote?.last_price} />}
             {/* The stop loss is the OPPOSITE side of the last order, which is
                 exactly why a single-side role needs it — a seller's stop is a
                 BUY. Gated only on the role being able to trade at all. */}

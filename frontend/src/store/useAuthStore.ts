@@ -11,6 +11,8 @@ interface AuthState {
   error: string | null;
   accounts: AccountSummary[];
   activeAccount: ActiveAccount | null;
+  /** The server runs `api --paper`: orders and prices are simulated. */
+  paperTrading: boolean;
   loadingAccounts: boolean;
   checkSession: () => Promise<void>;
   login: (username: string, password: string) => Promise<boolean>;
@@ -27,12 +29,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   error: null,
   accounts: [],
   activeAccount: null,
+  paperTrading: false,
   loadingAccounts: false,
   async checkSession() {
     const res = await appAuthService.me();
     set({
       user: res?.user ?? null,
       activeAccount: res?.activeAccount ?? null,
+      paperTrading: res?.paperTrading ?? false,
       checked: true,
     });
   },
@@ -40,7 +44,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ loggingIn: true, error: null });
     try {
       const user = await appAuthService.login(username, password);
-      set({ user, loggingIn: false });
+      // The login response doesn't carry server mode; /app/me does.
+      const me = await appAuthService.me();
+      set({ user, loggingIn: false, paperTrading: me?.paperTrading ?? false });
       return true;
     } catch {
       set({ loggingIn: false, error: "Invalid username or password." });

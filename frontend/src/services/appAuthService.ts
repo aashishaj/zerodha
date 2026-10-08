@@ -12,12 +12,13 @@ export const appAuthService = {
     return resp.data.user as AppUser;
   },
 
-  async me(): Promise<{ user: AppUser; activeAccount: ActiveAccount | null } | null> {
+  async me(): Promise<{ user: AppUser; activeAccount: ActiveAccount | null; paperTrading: boolean } | null> {
     try {
       const resp = await apiClient.get("/app/me");
       return {
         user: resp.data.user as AppUser,
         activeAccount: (resp.data.activeAccount ?? null) as ActiveAccount | null,
+        paperTrading: resp.data.paperTrading === true,
       };
     } catch {
       return null;

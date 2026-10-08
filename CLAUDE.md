@@ -23,6 +23,11 @@ python run.py login
 # Start just the API server
 python run.py api
 
+# Paper trading: same API, but orders/GTTs/prices are simulated in memory
+# (nothing reaches Zerodha; refuses to start if APP_URL is https).
+# Move a price with the "Paper LTP" box on each chart to fill/trigger orders.
+python run.py api --paper
+
 # Stream live ticks
 python run.py stream --duration 30 --mode ltp
 
@@ -120,6 +125,7 @@ Deployment / multi-account:
 - **`appauth.py`** — `UserStore`: SQLite-backed app users (roles `super_admin`/`trader`/`seller`/`buyer`), PBKDF2-SHA256 password hashing (600k iterations), and login sessions (12h TTL, per-session selected account). This is the app's own login, separate from the Zerodha/Kite session.
 - **`accounts.py`** — `AccountStore`: Zerodha accounts (one per broker `zerodha_user_id`), their per-account Kite app credentials, and the `user_accounts` assignment table controlling which buyers/sellers can act on which accounts. Shares `.zerodha/app.db` with `UserStore`.
 - **`secretbox.py`** — At-rest protection for stored `api_secret`: `harden_db_permissions()` (owner-only file perms, called on store init) and `encrypt_secret`/`decrypt_secret` (Fernet, keyed off `ZERODHA_DB_KEY`; no-ops to plaintext when unset).
+- **`paper_kite.py`** — `PaperKite`, an in-memory stand-in for `KiteConnect` used by `run.py api --paper`, plus `PaperTickBroadcaster`. Emulates Kite's documented order behaviour (SL waits at TRIGGER PENDING, a triggered SL is reported as LIMIT / SL-M as MARKET, tag rules, OCO GTT straddle rule). Prices move only via `/api/paper/price`. It cannot reproduce undocumented Kite rejections, so a small live trade is still the final check.
 - **`callback_server.py`** — Standalone localhost auth-callback bridge (`python run.py auth-server`) that catches the Kite OAuth redirect and exchanges the request token.
 - **`instruments.py`** — `InstrumentCatalog` for derivative look-up (futures/options grouped by underlying).
 - **`cli.py`** — `argparse` CLI; `auto_login_commands = {"api", "dashboard", "stream", "candles"}` sets `login_if_needed=True` automatically.
@@ -190,6 +196,7 @@ Orders, portfolio & watchlist:
 | GET | `/api/positions` | Open positions |
 | GET | `/api/watchlist` | Load watchlist file |
 | POST | `/api/watchlist` | Save watchlist file |
+| POST | `/api/paper/price` | Paper mode only (`api --paper`): set an instrument's simulated price; 404 otherwise |
 
 Historical intervals not natively in Kite (`5second`, `10second`, `15second`, `30second`, `2minute`, `4minute`, `week`) are synthesised server-side from minute or day data via `_expand_minute_rows` / `_resample_rows_by_minutes` / `_resample_rows_by_week`.
 
